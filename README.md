@@ -2,7 +2,7 @@
 
 > A local routing bridge that brings Xiaomi MiMo to `cc switch` + Codex.
 
-[🌐 Homepage](https://simonleen22.github.io/CCMimoLink/) · [中文文档](#中文)
+[🌐 Homepage](https://simonleen22.github.io/CCMimoLink/) · [中文文档](#中文) · [🍷 Windows 版本](https://github.com/2144291529/CCMimoLink-win) · [Releases](https://github.com/SimonLeen22/CCMimoLink/releases)
 
 ---
 
@@ -185,6 +185,8 @@ MIT License. See [LICENSE](LICENSE).
 # 中文
 
 > 面向 `cc switch` + Codex 的 Xiaomi MiMo 本地路由桥接器。
+
+🍷 [Windows 版本（第三方适配）](https://github.com/2144291529/CCMimoLink-win)
 
 CCMimoLink 不是又一个反向代理。它是一个主动协议适配层——把 Codex 风格的请求翻译成 MiMo 能稳定处理的形式，让你在 Codex 里无缝使用 Xiaomi MiMo 模型。
 
