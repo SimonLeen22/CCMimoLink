@@ -1,25 +1,18 @@
 # CCMimoLink
 
-> **[English](README_EN.md)** · **[中文](README_CN.md)** · **[HTML 文档](index.html)**
-
 A local routing bridge that brings Xiaomi MiMo to `cc switch` + Codex.
 
 CCMimoLink is not another reverse proxy — it is an active protocol adapter that translates Codex-style requests into a format MiMo can handle reliably.
 
 ```
-User → Codex → CCMimoLink (local proxy) → Xiaomi MiMo upstream
-         ↑                                       |
-         └── cc switch manages API Key ──────────┘
+User -> Codex -> CCMimoLink (local proxy) -> Xiaomi MiMo upstream
+         ^                                      |
+         |-- cc switch manages API Key ---------|
 ```
 
-## Key Capabilities
+## Documentation
 
-- **Protocol Adaptation** — Responses → Chat Completions translation with tool compatibility
-- **Multi-turn Continuation** — Bounded in-memory state, `previous_response_id` support
-- **Streaming Fidelity** — True incremental streaming, not buffered fake streams
-- **Multimodal Fallback** — Image requests auto-fallback to `mimo-v2.5`
-- **Dynamic Model Switching** — Switch between `mimo-v2.5` and `mimo-v2.5-pro`
-- **Safe Config Sync** — Auto-backup before rewriting, throttling with 429 backoff
+- Open [README.html](README.html) in a browser for the full bilingual documentation.
 
 ## Quick Start
 
@@ -37,13 +30,14 @@ go build -o ccmimolink .
 
 Default proxy address: `http://127.0.0.1:9876/v1`
 
-## Documentation
+## Key Capabilities
 
-| | |
-|---|---|
-| English | [README_EN.md](README_EN.md) |
-| 中文 | [README_CN.md](README_CN.md) |
-| HTML 文档 | [index.html](index.html) |
+- Protocol adaptation: OpenAI-style Responses API to MiMo chat completions
+- cc switch integration: reads Xiaomi MiMo API key from cc switch and rewrites local routing
+- Codex compatibility: function tools, continuation, compact handling, true streaming
+- Multimodal fallback: image requests automatically use `mimo-v2.5`
+- Dynamic model switching: `mimo-v2.5` and `mimo-v2.5-pro`
+- Production-minded behavior: throttling and upstream `429` backoff
 
 ## Requirements
 
