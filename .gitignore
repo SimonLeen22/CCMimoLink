@@ -1,0 +1,27 @@
+# Binaries
+ccmimolink
+mimo_proxy
+*.exe
+*.test
+
+# Logs
+*.log
+launchd.stdout.log
+launchd.stderr.log
+
+# Local backups and temp files
+*.bak
+*.bak.*
+*.tmp
+.DS_Store
+
+# Local runtime/config artifacts
+.cc-switch/
+.codex/
+*.db
+*.sqlite
+*.sqlite3
+
+# Build output
+dist/
+build/
