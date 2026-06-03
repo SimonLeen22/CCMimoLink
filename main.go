@@ -23,7 +23,7 @@ import (
 
 const (
 	defaultMimoBase          = "https://token-plan-cn.xiaomimimo.com/v1"
-	defaultMimoModel         = "mimo-v2.5"
+	defaultMimoModel         = "mimo-v2.5-pro"
 	proMimoModel             = "mimo-v2.5-pro"
 	visionMimoModel          = "mimo-v2.5"
 	defaultProxyPort         = "9876"
@@ -39,9 +39,11 @@ var (
 	limiter       = newUpstreamLimiter()
 	responseStore = newResponseStore(envIntOrDefault("MIMO_PROXY_RESPONSE_STORE_MAX", defaultResponseStoreSize))
 	skipCCSwitchSync = strings.EqualFold(strings.TrimSpace(os.Getenv("MIMO_PROXY_SKIP_CC_SWITCH_SYNC")), "true")
-	ccSwitchSettingsPath = envOrDefault("CC_SWITCH_SETTINGS_PATH", filepath.Join(envOrDefault("HOME", "/Users/shuiyang"), ".cc-switch", "settings.json"))
-	ccSwitchDBPath = envOrDefault("CC_SWITCH_DB_PATH", filepath.Join(envOrDefault("HOME", "/Users/shuiyang"), ".cc-switch", "cc-switch.db"))
-	codexConfigPath = envOrDefault("CODEX_CONFIG_PATH", filepath.Join(envOrDefault("HOME", "/Users/shuiyang"), ".codex", "config.toml"))
+	homeDir             = userHomeDir()
+	ccSwitchSettingsPath = envOrDefault("CC_SWITCH_SETTINGS_PATH", filepath.Join(homeDir, ".cc-switch", "settings.json"))
+	ccSwitchDBPath = envOrDefault("CC_SWITCH_DB_PATH", filepath.Join(homeDir, ".cc-switch", "cc-switch.db"))
+	codexConfigPath = envOrDefault("CODEX_CONFIG_PATH", filepath.Join(homeDir, ".codex", "config.toml"))
+	codexAuthPath = envOrDefault("CODEX_AUTH_PATH", filepath.Join(homeDir, ".codex", "auth.json"))
 )
 
 func applyModelFlag() {
@@ -87,6 +89,17 @@ func envIntOrDefault(name string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func userHomeDir() string {
+	if h, err := os.UserHomeDir(); err == nil {
+		return h
+	}
+	// Fallback for unusual environments.
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
+	return "/tmp"
 }
 
 func cloneRawMessage(raw json.RawMessage) json.RawMessage {
@@ -136,6 +149,12 @@ type codexConfigUpdate struct {
 	APIKey     string
 	BaseURL    string
 	Updated    bool
+}
+
+type codexAuthUpdate struct {
+	Path    string
+	APIKey  string
+	Updated bool
 }
 
 func newResponseStore(maxEntries int) *ResponseStore {
@@ -437,10 +456,110 @@ func updateCodexConfig(path, apiKey string) (codexConfigUpdate, error) {
 	updated = replaceTOMLStringInSection(updated, "[model_providers.mimo]", "base_url", localProxyURL())
 	updated = replaceTOMLStringInSection(updated, "[model_providers.mimo.http_headers]", "Authorization", "Bearer local-mimo-proxy")
 	updated = replaceTOMLStringInSection(updated, "[model_providers.mimo.http_headers]", "X-Mimo-Api-Key", apiKey)
+	// If the [model_providers.mimo] section didn't exist, the replace above is
+	// a no-op — and the user is then stuck: switching to MiMo in cc switch
+	// would fail because codex has no mimo route. Insert the section if it
+	// (or its http_headers sub-section) is missing, so MiMo is always
+	// plug-and-play from codex as soon as cc switch adds the provider.
+	if !hasTOMLSection(updated, "[model_providers.mimo]") {
+		updated = appendMissingMimoSections(updated, apiKey)
+	} else if !hasTOMLSection(updated, "[model_providers.mimo.http_headers]") {
+		updated = appendMissingMimoSections(updated, apiKey)
+	}
 	if updated == content {
 		return result, nil
 	}
 	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		return result, err
+	}
+	result.Updated = true
+	return result, nil
+}
+
+// hasTOMLSection reports whether `content` contains a top-level TOML section
+// header exactly matching `section` (e.g. "[model_providers.mimo]"). It does
+// not match prefix strings, so "[model_providers.mimo.http_headers]" will not
+// be reported as a match for "[model_providers.mimo]".
+func hasTOMLSection(content, section string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == section {
+			return true
+		}
+	}
+	return false
+}
+
+// appendMissingMimoSections appends a complete [model_providers.mimo] block
+// (with base_url, wire_api, name, and http_headers) to the end of `content`
+// if it is missing. Used to guarantee that codex always has a usable MiMo
+// route after ccmimolink starts, regardless of what was in config.toml.
+func appendMissingMimoSections(content, apiKey string) string {
+	if hasTOMLSection(content, "[model_providers.mimo]") {
+		// [model_providers.mimo] exists but http_headers sub-section is
+		// missing — just append the sub-section.
+		header := "\n[model_providers.mimo.http_headers]\n"
+		header += "Authorization = \"Bearer local-mimo-proxy\"\n"
+		header += fmt.Sprintf("X-Mimo-Api-Key = \"%s\"\n", apiKey)
+		return content + header
+	}
+	// Whole mimo block missing — append it under a new [model_providers]
+	// parent (idempotent: TOML allows the same table to be declared twice).
+	block := "\n[model_providers.mimo]\n"
+	block += "name = \"Xiaomi MiMo\"\n"
+	block += "base_url = \"" + localProxyURL() + "\"\n"
+	block += "wire_api = \"responses\"\n"
+	block += "\n[model_providers.mimo.http_headers]\n"
+	block += "Authorization = \"Bearer local-mimo-proxy\"\n"
+	block += fmt.Sprintf("X-Mimo-Api-Key = \"%s\"\n", apiKey)
+	return content + block
+}
+
+// updateCodexAuth writes the MiMo API key into the OPENAI_API_KEY field of
+// `~/.codex/auth.json`, mirroring CC Switch's default behavior for third-party
+// providers (see `write_codex_live_for_provider` in farion1231/cc-switch).
+//
+// It preserves every other field in the file — ChatGPT login tokens, MCP
+// credentials, etc. — so users who log into ChatGPT for the official OpenAI
+// flow don't lose their session. The function is idempotent: if the file is
+// missing, an empty one is created; if the OPENAI_API_KEY already matches
+// `apiKey`, the file is left untouched and `Updated` stays false.
+func updateCodexAuth(path, apiKey string) (codexAuthUpdate, error) {
+	result := codexAuthUpdate{Path: path, APIKey: apiKey}
+
+	// Read existing file if present; otherwise start from an empty object.
+	// We intentionally allow a missing file here — auth.json is created by
+	// codex's first login, and not all MiMo-only installs have ever logged
+	// in to ChatGPT.
+	var payload map[string]interface{}
+	if data, err := os.ReadFile(path); err == nil {
+		if len(bytes.TrimSpace(data)) > 0 {
+			if err := json.Unmarshal(data, &payload); err != nil {
+				return result, fmt.Errorf("codex auth.json is not valid JSON: %w", err)
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return result, err
+	}
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+
+	// Only write if the key actually differs. Avoids needless mtime churn
+	// (which would also invalidate any "live" view the cc-switch UI has).
+	if existing, _ := payload["OPENAI_API_KEY"].(string); existing == apiKey {
+		return result, nil
+	}
+	payload["OPENAI_API_KEY"] = apiKey
+
+	encoded, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return result, err
+	}
+	// Add trailing newline so editors / `cat` don't complain.
+	encoded = append(encoded, '\n')
+
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
 		return result, err
 	}
 	result.Updated = true
@@ -489,25 +608,27 @@ func syncCCSwitchAndCodex() error {
 	if err := ensureCCSwitchInstalled(); err != nil {
 		return fmt.Errorf("cc switch is not installed or incomplete: %w", err)
 	}
-	settings, err := loadCCSwitchSettings(ccSwitchSettingsPath)
+	// Locked to the Xiaomi MiMo provider only. We deliberately ignore
+	// `currentProviderCodex` here: ccmimolink is the proxy for the MiMo
+	// channel, not for whatever provider the user happens to be using in
+	// Codex right now. Reading api keys / config from a non-MiMo provider
+	// would silently corrupt the MiMo codex routing and credentials.
+	provider, err := loadFirstMimoProvider(ccSwitchDBPath)
 	if err != nil {
-		return err
-	}
-	provider, err := loadCCSwitchProvider(ccSwitchDBPath, settings.CurrentProviderCodex)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(strings.ToLower(provider.Name), "mimo") {
-		fallback, fallbackErr := loadFirstMimoProvider(ccSwitchDBPath)
-		if fallbackErr != nil {
-			return fmt.Errorf("current cc switch Codex provider is %q, not Xiaomi MiMo; please configure Xiaomi MiMo in cc switch first", provider.Name)
-		}
-		log.Printf("[CCMimoLink] current cc switch Codex provider is %q; using Xiaomi MiMo provider %q instead", provider.Name, fallback.ID)
-		provider = fallback
+		return fmt.Errorf("Xiaomi MiMo provider not found in cc switch: %w", err)
 	}
 	apiKey, err := extractCCSwitchAPIKey(provider.SettingsConfig)
 	if err != nil {
 		return err
+	}
+	// Hard guard: the Xiaomi MiMo api key in cc switch MUST match the
+	// `MIMO_API_KEY` that ccmimolink was launched with. If they differ, a
+	// previous buggy revision of this code may have written a non-MiMo
+	// provider's key into the MiMo record — refuse to sync, otherwise
+	// we'd propagate the wrong key into codex config.toml.
+	if mimoKey != "" && apiKey != mimoKey {
+		return fmt.Errorf("cc switch Xiaomi MiMo OPENAI_API_KEY (%s…%s) does not match MIMO_API_KEY from launchd env (%s…%s); please open cc switch and restore the correct MiMo API key on the Xiaomi MiMo provider, then restart ccmimolink",
+			maskKey(apiKey), maskKey(mimoKey), maskKey(mimoKey), maskKey(apiKey))
 	}
 	if err := rewriteCCSwitchProxyRoute(ccSwitchDBPath, provider.ID); err != nil {
 		return err
@@ -516,15 +637,43 @@ func syncCCSwitchAndCodex() error {
 	if err != nil {
 		return err
 	}
-	log.Printf("[CCMimoLink] synced cc switch Xiaomi MiMo provider %s to local route %s", provider.ID, localProxyURL())
+	// Mirror CC Switch's default behavior for third-party providers: it
+	// overwrites ~/.codex/auth.json.OPENAI_API_KEY when switching to a
+	// non-official provider (see `write_codex_live_for_provider` in
+	// farion1231/cc-switch). We follow the same convention so the auth.json
+	// shown in the cc-switch edit dialog matches the MiMo key actually in
+	// use, and so a future direct switch to official OpenAI via codex still
+	// has a valid mimo-era key in the file. We only touch OPENAI_API_KEY,
+	// leaving any ChatGPT login tokens in place.
+	authUpdate, err := updateCodexAuth(codexAuthPath, apiKey)
+	if err != nil {
+		return err
+	}
+	log.Printf("[CCMimoLink] locked cc switch Xiaomi MiMo provider %s to local route %s (independent of currentProviderCodex)", provider.ID, localProxyURL())
 	log.Printf("[CCMimoLink] backed up Codex config to %s", update.BackupPath)
 	if update.Updated {
-		log.Printf("[CCMimoLink] updated Codex Xiaomi MiMo headers from cc switch API key")
+		log.Printf("[CCMimoLink] updated Codex Xiaomi MiMo headers from Xiaomi MiMo API key")
 	} else {
 		log.Printf("[CCMimoLink] Codex config already matched the required Xiaomi MiMo route and API key")
 	}
+	if authUpdate.Updated {
+		log.Printf("[CCMimoLink] updated Codex auth.json OPENAI_API_KEY to Xiaomi MiMo API key (other fields preserved)")
+	} else {
+		log.Printf("[CCMimoLink] Codex auth.json OPENAI_API_KEY already matched the Xiaomi MiMo API key")
+	}
 	log.Printf("[CCMimoLink] restart cc switch and restart Codex to apply the updated Xiaomi MiMo routing and API key")
 	return nil
+}
+
+// maskKey returns a short fingerprint of an api key for error messages,
+// so we can compare keys in logs without exposing the full secret.
+// It shows the first 6 and last 4 characters separated by "…".
+func maskKey(key string) string {
+	key = strings.TrimSpace(key)
+	if len(key) <= 12 {
+		return "***"
+	}
+	return key[:6] + "…" + key[len(key)-4:]
 }
 
 func runStartupSyncOnly() error {
@@ -1814,7 +1963,363 @@ func handleModels(w http.ResponseWriter, r *http.Request) {
 	w.Write(respBody)
 }
 
+// ---------------------------------------------------------------------------
+// First-class CLI subcommands (model set/status/restart, sync)
+// Replaces the external switch-mimo.sh shell script.
+// ---------------------------------------------------------------------------
+
+// validModels lists accepted model names (exact match).
+var validModels = map[string]bool{
+	"mimo-v2.5-pro": true,
+	"mimo-v2.5":     true,
+}
+
+// modelAliases maps short names to full model identifiers.
+var modelAliases = map[string]string{
+	"pro":  "mimo-v2.5-pro",
+	"v2.5": "mimo-v2.5",
+}
+
+func resolveModelName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if validModels[name] {
+		return name, nil
+	}
+	if full, ok := modelAliases[name]; ok {
+		return full, nil
+	}
+	return "", fmt.Errorf("unknown model %q; valid: mimo-v2.5-pro, mimo-v2.5 (aliases: pro, v2.5)", name)
+}
+
+// findPlist locates the launchd plist for ccmimolink / mimo_proxy.
+// Priority: PLIST_PATH env var → known names → glob *mimo-proxy*.plist.
+func findPlist() (string, error) {
+	if p := strings.TrimSpace(os.Getenv("PLIST_PATH")); p != "" {
+		if _, err := os.Stat(p); err != nil {
+			return "", fmt.Errorf("PLIST_PATH=%s: %w", p, err)
+		}
+		return p, nil
+	}
+
+	home := homeDir
+	dir := filepath.Join(home, "Library", "LaunchAgents")
+
+	// Prefer well-known names first.
+	for _, name := range []string{
+		"com.ccmimolink.mimo-proxy.plist",
+		"com.shuiyang.mimo-proxy.plist",
+	} {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	// Fall back to any *mimo-proxy*.plist (newest first).
+	matches, _ := filepath.Glob(filepath.Join(dir, "*mimo-proxy.plist"))
+	if len(matches) > 0 {
+		sort.Slice(matches, func(i, j int) bool {
+			si, _ := os.Stat(matches[i])
+			sj, _ := os.Stat(matches[j])
+			return si.ModTime().After(sj.ModTime())
+		})
+		return matches[0], nil
+	}
+
+	return "", fmt.Errorf("no mimo-proxy plist found in %s; set PLIST_PATH env var", dir)
+}
+
+func plistLabel(plistPath string) string {
+	out, err := exec.Command("/usr/libexec/PlistBuddy", "-c", "Print :Label", plistPath).Output()
+	if err == nil {
+		if label := strings.TrimSpace(string(out)); label != "" {
+			return label
+		}
+	}
+	return strings.TrimSuffix(filepath.Base(plistPath), ".plist")
+}
+
+func readPlistModel(plistPath string) string {
+	out, err := exec.Command("/usr/libexec/PlistBuddy", "-c", "Print :EnvironmentVariables:MIMO_MODEL", plistPath).Output()
+	if err != nil {
+		return "<unset>"
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func setPlistModel(plistPath, model string) error {
+	out, err := exec.Command("/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:MIMO_MODEL "+model, plistPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("PlistBuddy set failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func plistBinaryName(plistPath string) string {
+	out, err := exec.Command("/usr/libexec/PlistBuddy", "-c", "Print :ProgramArguments:0", plistPath).Output()
+	if err == nil {
+		return filepath.Base(strings.TrimSpace(string(out)))
+	}
+	return "mimo_proxy"
+}
+
+func pgrepFind(name string) string {
+	out, err := exec.Command("pgrep", "-f", name).Output()
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	return strings.TrimSpace(lines[0])
+}
+
+func launchdObservedModel(domain, label string) string {
+	out, err := exec.Command("launchctl", "print", domain+"/"+label).Output()
+	if err != nil {
+		return ""
+	}
+	inEnv := false
+	for _, line := range strings.Split(string(out), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "environment = {") {
+			inEnv = true
+			continue
+		}
+		if inEnv && strings.Contains(trimmed, "}") {
+			break
+		}
+		if inEnv && strings.Contains(trimmed, "MIMO_MODEL") {
+			parts := strings.SplitN(trimmed, "=>", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
+// launchdRestart performs bootout + bootstrap — the ONLY reliable way to make
+// launchd re-read EnvironmentVariables from the plist. A plain `kickstart -k`
+// reuses the cached service context and will NOT pick up the new MIMO_MODEL.
+func launchdRestart(plistPath, label string) error {
+	domain := fmt.Sprintf("gui/%d", os.Getuid())
+
+	// Step 1: bootout (ignore error — service might not be running).
+	exec.Command("launchctl", "bootout", domain+"/"+label).CombinedOutput()
+
+	// Step 2: bootstrap.
+	if out, err := exec.Command("launchctl", "bootstrap", domain, plistPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("launchctl bootstrap failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	// Step 3: wait for process to appear (up to ~2.5 s).
+	binaryName := plistBinaryName(plistPath)
+	for i := 0; i < 5; i++ {
+		time.Sleep(500 * time.Millisecond)
+		if pgrepFind(binaryName) != "" {
+			break
+		}
+	}
+
+	// Step 4: verify launchd actually loaded the new env var.
+	observed := launchdObservedModel(domain, label)
+	plisted := readPlistModel(plistPath)
+	if observed != "" && observed != plisted {
+		return fmt.Errorf("plist says %s but launchd still shows %s; service may not have fully restarted", plisted, observed)
+	}
+
+	return nil
+}
+
+func printModelStatus() {
+	plistPath, err := findPlist()
+	if err != nil {
+		fmt.Printf("  Error: %v\n", err)
+		return
+	}
+	label := plistLabel(plistPath)
+	binaryName := plistBinaryName(plistPath)
+	domain := fmt.Sprintf("gui/%d", os.Getuid())
+
+	fmt.Printf("  plist          : %s\n", plistPath)
+	fmt.Printf("  label          : %s\n", label)
+	fmt.Printf("  MIMO_MODEL     : %s\n", readPlistModel(plistPath))
+
+	pid := pgrepFind(binaryName)
+	if pid != "" {
+		fmt.Printf("  process (pid)  : %s\n", pid)
+		if out, err := exec.Command("ps", "-p", pid, "-o", "etime=").Output(); err == nil {
+			if etime := strings.TrimSpace(string(out)); etime != "" {
+				fmt.Printf("  uptime         : %s\n", etime)
+			}
+		}
+	} else {
+		fmt.Printf("  process        : <not running>\n")
+	}
+
+	if observed := launchdObservedModel(domain, label); observed != "" {
+		fmt.Printf("  MIMO_MODEL(live): %s\n", observed)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand dispatch
+// ---------------------------------------------------------------------------
+
+func runSubcommand(args []string) (bool, int) {
+	if len(args) == 0 {
+		return false, 0
+	}
+	switch args[0] {
+	case "model":
+		return runModelSubcommand(args[1:])
+	case "sync":
+		return runSyncSubcommand()
+	case "help", "--help", "-h":
+		printSubcommandHelp()
+		return true, 0
+	default:
+		// Not a recognized subcommand → fall through to legacy flag parsing.
+		return false, 0
+	}
+}
+
+func runModelSubcommand(args []string) (bool, int) {
+	if len(args) == 0 {
+		fmt.Println("Usage: ccmimolink model {set|status|restart}")
+		fmt.Println()
+		fmt.Println("  set <model> [--restart|-r]   Set MIMO_MODEL in plist (optionally restart)")
+		fmt.Println("  status                       Show current model, process, and plist info")
+		fmt.Println("  restart                      Restart the launchd service")
+		fmt.Println()
+		fmt.Println("  Valid models: mimo-v2.5-pro, mimo-v2.5 (aliases: pro, v2.5)")
+		return true, 0
+	}
+	switch args[0] {
+	case "set":
+		return runModelSet(args[1:])
+	case "status":
+		printModelStatus()
+		return true, 0
+	case "restart":
+		return runModelRestart()
+	default:
+		fmt.Printf("Unknown model subcommand: %q\n", args[0])
+		fmt.Println("Valid: set, status, restart")
+		return true, 1
+	}
+}
+
+func runModelSet(args []string) (bool, int) {
+	if len(args) == 0 {
+		fmt.Println("Usage: ccmimolink model set <model> [--restart|-r]")
+		fmt.Println("  Valid models: mimo-v2.5-pro, mimo-v2.5 (aliases: pro, v2.5)")
+		return true, 1
+	}
+
+	resolved, err := resolveModelName(args[0])
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return true, 1
+	}
+
+	wantRestart := false
+	for _, a := range args[1:] {
+		switch a {
+		case "--restart", "-r":
+			wantRestart = true
+		default:
+			fmt.Printf("Unknown flag: %q\n", a)
+			return true, 1
+		}
+	}
+
+	plistPath, err := findPlist()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return true, 1
+	}
+
+	if err := setPlistModel(plistPath, resolved); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return true, 1
+	}
+
+	fmt.Printf("✓ plist updated: MIMO_MODEL = %s\n", resolved)
+
+	if wantRestart {
+		label := plistLabel(plistPath)
+		fmt.Printf("→ restarting service %s ...\n", label)
+		if err := launchdRestart(plistPath, label); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return true, 1
+		}
+		fmt.Println("✓ service restarted")
+		printModelStatus()
+	} else {
+		fmt.Printf("→ run './ccmimolink model restart' or './ccmimolink model set %s --restart' to apply\n", resolved)
+	}
+
+	return true, 0
+}
+
+func runModelRestart() (bool, int) {
+	plistPath, err := findPlist()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return true, 1
+	}
+
+	label := plistLabel(plistPath)
+	fmt.Printf("→ restarting service %s ...\n", label)
+
+	if err := launchdRestart(plistPath, label); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return true, 1
+	}
+
+	fmt.Println("✓ service restarted")
+	printModelStatus()
+	return true, 0
+}
+
+func runSyncSubcommand() (bool, int) {
+	setupLogging()
+	if err := syncCCSwitchAndCodex(); err != nil {
+		fmt.Printf("Error: sync failed: %v\n", err)
+		return true, 1
+	}
+	fmt.Println("✓ sync completed (cc switch + codex config + auth.json)")
+	return true, 0
+}
+
+func printSubcommandHelp() {
+	fmt.Println("ccmimolink — Claude Code MiMo proxy with OpenAI-compatible API")
+	fmt.Println()
+	fmt.Println("Subcommands:")
+	fmt.Println("  model set <name> [--restart|-r]  Set MIMO_MODEL in plist")
+	fmt.Println("  model status                     Show current model, process, plist info")
+	fmt.Println("  model restart                    Restart the launchd service")
+	fmt.Println("  sync                             Sync cc switch + codex config + auth.json")
+	fmt.Println()
+	fmt.Println("Legacy flags (for direct non-launchd runs):")
+	fmt.Println("  --v2.5          Use mimo-v2.5 for text requests")
+	fmt.Println("  --v2.5-pro      Use mimo-v2.5-pro for text requests")
+	fmt.Println("  --sync-only     Sync cc switch and codex config, then exit")
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
 func main() {
+	// First-class subcommands take precedence over legacy flags. This lets
+	// users do `./ccmimolink model set mimo-v2.5-pro` to switch models and
+	// restart the launchd service without needing the external
+	// switch-mimo.sh helper.
+	if handled, exitCode := runSubcommand(os.Args[1:]); handled {
+		os.Exit(exitCode)
+	}
+
 	applyModelFlag()
 	setupLogging()
 	if err := syncCCSwitchAndCodex(); err != nil {

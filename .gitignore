@@ -1,5 +1,6 @@
 # Binaries
 ccmimolink
+ccmimolink.fixed
 mimo_proxy
 *.exe
 *.test
@@ -21,6 +22,12 @@ launchd.stderr.log
 *.db
 *.sqlite
 *.sqlite3
+
+# Test artifacts (may contain real API keys)
+test_artifacts/
+
+# Shell helpers (functionality now integrated into main binary)
+switch-mimo.sh
 
 # Build output
 dist/

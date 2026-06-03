@@ -4,6 +4,8 @@
 
 [🌐 Homepage](https://simonleen22.github.io/CCMimoLink/) · [中文文档](#中文) · [🍷 Windows 版本](https://github.com/2144291529/CCMimoLink-win) · [Releases](https://github.com/SimonLeen22/CCMimoLink/releases)
 
+**v1.1** — CLI subcommands for model management and config sync are now built in.
+
 ---
 
 CCMimoLink is not another reverse proxy. It is an active protocol adapter that translates Codex-style requests into a format MiMo can handle reliably — letting you use Xiaomi MiMo models seamlessly within Codex.
@@ -31,7 +33,7 @@ User → Codex → CCMimoLink (local proxy) → Xiaomi MiMo upstream
 ### Intelligent Routing
 
 - **Multimodal Fallback**: Requests containing images automatically fall back to `mimo-v2.5` for compatibility.
-- **Dynamic Model Switching**: Text requests can switch between `mimo-v2.5` and `mimo-v2.5-pro` via environment variables or startup flags.
+- **Dynamic Model Switching**: Switch between `mimo-v2.5` and `mimo-v2.5-pro` via built-in CLI subcommands (`model set` + `model restart`), environment variables, or startup flags.
 
 ### Safety and Resilience
 
@@ -70,7 +72,7 @@ go build -o ccmimolink .
 Rewrite routes and refresh config without starting the proxy:
 
 ```bash
-./ccmimolink --sync-only
+./ccmimolink sync
 ```
 
 ### Step 4: Run the proxy
@@ -83,17 +85,38 @@ Default local proxy address: `http://127.0.0.1:9876/v1`
 
 ### Step 5: Switch models (optional)
 
-Text requests default to `mimo-v2.5`. Switch to `mimo-v2.5-pro` with either method:
+Text requests default to `mimo-v2.5-pro`. Use the built-in CLI to switch models and restart the launchd service in one line:
 
 ```bash
-# Environment variable
-MIMO_MODEL="mimo-v2.5-pro" ./ccmimolink
+# Switch to mimo-v2.5 and restart
+./ccmimolink model set v2.5 --restart
 
-# Startup flag
-./ccmimolink --v2.5-pro
+# Check current status
+./ccmimolink model status
+
+# Or use environment variables (non-launchd scenarios)
+MIMO_MODEL="mimo-v2.5" ./ccmimolink
+
+# Or use startup flags
+./ccmimolink --v2.5
 ```
 
 > Image requests are unaffected and always fall back to `mimo-v2.5`.
+
+## CLI Subcommands
+
+v1.1 introduces built-in CLI subcommands — no external scripts needed:
+
+| Command | Description |
+| --- | --- |
+| `model set <name>` | Set MIMO_MODEL in plist (run `model restart` separately) |
+| `model set <name> --restart` | Set model + restart launchd service in one step |
+| `model status` | Show current model, process PID, plist info |
+| `model restart` | Restart the launchd service (bootout + bootstrap) |
+| `sync` | Sync cc switch + Codex config + auth.json (no proxy) |
+| `help` | Show full help |
+
+Model aliases: `pro` → `mimo-v2.5-pro`, `v2.5` → `mimo-v2.5`.
 
 ## Configuration
 
@@ -103,7 +126,7 @@ All runtime settings are provided via environment variables:
 | --- | --- | --- |
 | `MIMO_API_KEY` | empty | Fallback MiMo upstream API key. Normally the key comes from the `X-Mimo-Api-Key` header; this is only a safety net. |
 | `MIMO_BASE_URL` | `https://token-plan-cn.xiaomimimo.com/v1` | MiMo upstream base URL. |
-| `MIMO_MODEL` | `mimo-v2.5` | Default text model. |
+| `MIMO_MODEL` | `mimo-v2.5-pro` | Default text model. |
 | `MIMO_PROXY_PORT` | `9876` | Local listen port. |
 | `MIMO_PROXY_MAX_CONCURRENT` | `1` | Maximum concurrent upstream requests. |
 | `MIMO_PROXY_MIN_INTERVAL_MS` | `1500` | Minimum delay between upstream requests (ms). |
@@ -162,7 +185,7 @@ This is usually fine. CCMimoLink will automatically locate the Xiaomi MiMo provi
 
 **`cc switch route still looks incorrect`**
 
-Run `./ccmimolink --sync-only` again, then restart `cc switch`.
+Run `./ccmimolink sync` again, then restart `cc switch`.
 
 **`Codex still uses the old route or key`**
 
@@ -213,7 +236,7 @@ CCMimoLink 不是又一个反向代理。它是一个主动协议适配层——
 ### 智能路由
 
 - **多模态回落**：请求中带图片时，自动回落到 `mimo-v2.5` 保证兼容性
-- **动态模型切换**：纯文本请求可在 `mimo-v2.5` 与 `mimo-v2.5-pro` 之间通过环境变量或启动参数动态切换
+- **动态模型切换**：通过内置 CLI 子命令（`model set` + `model restart`）、环境变量或启动参数，在 `mimo-v2.5` 与 `mimo-v2.5-pro` 之间动态切换
 
 ### 安全与韧性
 
@@ -252,7 +275,7 @@ go build -o ccmimolink .
 只做配置同步，不启动代理服务：
 
 ```bash
-./ccmimolink --sync-only
+./ccmimolink sync
 ```
 
 ### 第四步：启动代理
@@ -265,17 +288,38 @@ go build -o ccmimolink .
 
 ### 第五步：切换模型（可选）
 
-纯文本请求默认使用 `mimo-v2.5`，可通过以下方式切换到 `mimo-v2.5-pro`：
+纯文本请求默认使用 `mimo-v2.5-pro`。使用内置 CLI 子命令一键切换模型并重启 launchd 服务：
 
 ```bash
-# 环境变量方式
-MIMO_MODEL="mimo-v2.5-pro" ./ccmimolink
+# 切换到 mimo-v2.5 并重启
+./ccmimolink model set v2.5 --restart
 
-# 启动参数方式
-./ccmimolink --v2.5-pro
+# 查看当前状态
+./ccmimolink model status
+
+# 也可用环境变量方式（非 launchd 场景）
+MIMO_MODEL="mimo-v2.5" ./ccmimolink
+
+# 或使用启动参数
+./ccmimolink --v2.5
 ```
 
 > 图片请求不受影响，始终回落到 `mimo-v2.5`。
+
+## CLI 子命令
+
+v1.1 新增内置 CLI 子命令，无需外部脚本：
+
+| 命令 | 说明 |
+| --- | --- |
+| `model set <name>` | 设置 plist 中的 MIMO_MODEL（需再执行 restart） |
+| `model set <name> --restart` | 设置模型 + 重启 launchd 服务（一步完成） |
+| `model status` | 查看当前模型、进程 PID、plist 信息 |
+| `model restart` | 重启 launchd 服务（bootout + bootstrap） |
+| `sync` | 同步 cc switch + Codex 配置 + auth.json（不启动代理） |
+| `help` | 显示完整帮助 |
+
+模型别名：`pro` → `mimo-v2.5-pro`，`v2.5` → `mimo-v2.5`。
 
 ## 配置项
 
@@ -285,7 +329,7 @@ MIMO_MODEL="mimo-v2.5-pro" ./ccmimolink
 | --- | --- | --- |
 | `MIMO_API_KEY` | 空 | MiMo 上游备用 API Key。正常情况下 Key 来自请求头 `X-Mimo-Api-Key`，此项仅作兜底。 |
 | `MIMO_BASE_URL` | `https://token-plan-cn.xiaomimimo.com/v1` | MiMo 上游地址 |
-| `MIMO_MODEL` | `mimo-v2.5` | 默认文本模型 |
+| `MIMO_MODEL` | `mimo-v2.5-pro` | 默认文本模型 |
 | `MIMO_PROXY_PORT` | `9876` | 本地监听端口 |
 | `MIMO_PROXY_MAX_CONCURRENT` | `1` | 最大并发上游请求数 |
 | `MIMO_PROXY_MIN_INTERVAL_MS` | `1500` | 上游请求最小间隔（毫秒） |
@@ -344,7 +388,7 @@ MIMO_MODEL="mimo-v2.5-pro" ./ccmimolink
 
 **`cc switch 里的请求地址看起来不对`**
 
-再执行一次 `./ccmimolink --sync-only`，然后重启 `cc switch`。
+再执行一次 `./ccmimolink sync`，然后重启 `cc switch`。
 
 **`Codex 仍然使用旧路由或旧 Key`**
 

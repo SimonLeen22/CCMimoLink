@@ -649,6 +649,7 @@
       <div class="nav-links">
         <a href="#features" data-zh>功能</a><a href="#features" data-en>Features</a>
         <a href="#quickstart" data-zh>快速开始</a><a href="#quickstart" data-en>Quick Start</a>
+        <a href="#cli" data-zh>CLI</a><a href="#cli" data-en>CLI</a>
         <a href="#config" data-zh>配置</a><a href="#config" data-en>Config</a>
         <a href="#faq" data-zh>常见问题</a><a href="#faq" data-en>FAQ</a>
         <div class="lang-toggle">
@@ -664,8 +665,8 @@
     <div class="container">
       <div class="hero-badge">
         <span class="pulse"></span>
-        <span data-zh>开源 · 本地路由桥接器</span>
-        <span data-en>Open Source · Local Routing Bridge</span>
+        <span data-zh>开源 · 本地路由桥接器 · v1.1</span>
+        <span data-en>Open Source · Local Routing Bridge · v1.1</span>
       </div>
       <p class="hero-author">
         <span data-zh>作者</span><span data-en>Author</span>：<a href="https://x.com/simonlin" target="_blank" rel="noopener">@simonlin</a> · <a href="https://github.com/SimonLeen22/CCMimoLink" target="_blank" rel="noopener">GitHub</a>
@@ -772,8 +773,8 @@
         </div>
         <div class="feature-card">
           <h3 data-zh>动态模型切换</h3><h3 data-en>Dynamic Model Switch</h3>
-          <p data-zh>纯文本请求可在 mimo-v2.5 与 mimo-v2.5-pro 之间通过环境变量或启动参数切换。</p>
-          <p data-en>Switch text traffic between mimo-v2.5 and mimo-v2.5-pro via env vars or startup flags.</p>
+          <p data-zh>内置 CLI 子命令一行切换模型并重启 launchd 服务，也可通过环境变量或启动参数切换。</p>
+          <p data-en>Built-in CLI subcommands to switch models and restart the launchd service in one line, or use env vars / startup flags.</p>
         </div>
         <div class="feature-card">
           <h3 data-zh>安全同步</h3><h3 data-en>Safe Sync</h3>
@@ -825,7 +826,7 @@
           </div>
           <p data-zh>只做配置同步，不启动代理服务：</p>
           <p data-en>Rewrite routes and refresh config without starting the proxy:</p>
-          <pre><code>./ccmimolink --sync-only</code></pre>
+          <pre><code>./ccmimolink sync</code></pre>
         </div>
 
         <div class="step">
@@ -843,20 +844,77 @@
         <div class="step">
           <div class="step-header">
             <span class="step-num">5</span>
-            <h3 data-zh>切换模型（可选）</h3><h3 data-en>Switch models (optional)</h3>
+            <h3 data-zh>切换模型</h3><h3 data-en>Switch models</h3>
           </div>
-          <p data-zh>纯文本请求默认使用 mimo-v2.5，可通过以下方式切换到 mimo-v2.5-pro：</p>
-          <p data-en>Text requests default to mimo-v2.5. Switch to mimo-v2.5-pro:</p>
-          <pre><code># <span data-zh>环境变量方式</span><span data-en>Environment variable</span>
-MIMO_MODEL="mimo-v2.5-pro" ./ccmimolink
+          <p data-zh>纯文本请求默认使用 mimo-v2.5-pro。使用内置子命令一键切换模型并重启 launchd 服务：</p>
+          <p data-en>Text requests default to mimo-v2.5-pro. Use built-in subcommands to switch and restart the launchd service in one line:</p>
+          <pre><code># <span data-zh>切换到 mimo-v2.5 并重启</span><span data-en>Switch to mimo-v2.5 and restart</span>
+./ccmimolink model set v2.5 --restart
 
-# <span data-zh>启动参数方式</span><span data-en>Startup flag</span>
-./ccmimolink --v2.5-pro</code></pre>
+# <span data-zh>查看当前状态</span><span data-en>Check current status</span>
+./ccmimolink model status
+
+# <span data-zh>也可用环境变量方式（非 launchd 场景）</span><span data-en>Or use env vars (non-launchd scenarios)</span>
+MIMO_MODEL="mimo-v2.5" ./ccmimolink</code></pre>
           <div class="callout">
             <span data-zh>图片请求不受影响，始终回落到 mimo-v2.5。</span>
             <span data-en>Image requests are unaffected and always fall back to mimo-v2.5.</span>
           </div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLI Subcommands -->
+  <section id="cli">
+    <div class="container">
+      <div class="section-header">
+        <h2>
+          <span class="icon">💻</span>
+          <span data-zh>CLI 子命令</span><span data-en>CLI Subcommands</span>
+        </h2>
+        <p data-zh>v1.1 新增：模型管理和配置同步现在可以直接通过主程序完成，无需外部脚本。</p>
+        <p data-en>New in v1.1: Model management and config sync can now be done directly through the main binary — no external scripts needed.</p>
+      </div>
+      <div class="config-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-zh>命令</th><th data-en>Command</th>
+              <th data-zh>说明</th><th data-en>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>model set &lt;name&gt;</code></td>
+              <td><span data-zh>设置 plist 中的 MIMO_MODEL（需再执行 restart）</span><span data-en>Set MIMO_MODEL in plist (run restart separately)</span></td>
+            </tr>
+            <tr>
+              <td><code>model set &lt;name&gt; --restart</code></td>
+              <td><span data-zh>设置模型 + 重启 launchd 服务（一步完成）</span><span data-en>Set model + restart launchd service (one step)</span></td>
+            </tr>
+            <tr>
+              <td><code>model status</code></td>
+              <td><span data-zh>查看当前模型、进程 PID、plist 信息</span><span data-en>Show current model, process PID, plist info</span></td>
+            </tr>
+            <tr>
+              <td><code>model restart</code></td>
+              <td><span data-zh>重启 launchd 服务（bootout + bootstrap）</span><span data-en>Restart launchd service (bootout + bootstrap)</span></td>
+            </tr>
+            <tr>
+              <td><code>sync</code></td>
+              <td><span data-zh>同步 cc switch + Codex 配置 + auth.json（不启动代理）</span><span data-en>Sync cc switch + Codex config + auth.json (no proxy)</span></td>
+            </tr>
+            <tr>
+              <td><code>help</code></td>
+              <td><span data-zh>显示完整帮助</span><span data-en>Show full help</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout" style="margin-top: 1.5rem;">
+        <strong data-zh>模型别名：</strong><strong data-en>Model aliases: </strong>
+        <code>pro</code> → <code>mimo-v2.5-pro</code>，<code>v2.5</code> → <code>mimo-v2.5</code>
       </div>
     </div>
   </section>
@@ -938,7 +996,7 @@ MIMO_MODEL="mimo-v2.5-pro" ./ccmimolink
             </tr>
             <tr>
               <td><code>MIMO_MODEL</code></td>
-              <td><code>mimo-v2.5</code></td>
+              <td><code>mimo-v2.5-pro</code></td>
               <td><span data-zh>默认文本模型</span><span data-en>Default text model</span></td>
             </tr>
             <tr>
@@ -1059,8 +1117,8 @@ MIMO_MODEL="mimo-v2.5-pro" ./ccmimolink
           <div class="faq-q" data-zh>cc switch 里的请求地址看起来不对</div>
           <div class="faq-q" data-en>cc switch route still looks incorrect</div>
           <div class="faq-a"><div class="faq-a-inner">
-            <span data-zh>再执行一次 <code>./ccmimolink --sync-only</code>，然后重启 cc switch。</span>
-            <span data-en>Run <code>./ccmimolink --sync-only</code> again, then restart cc switch.</span>
+            <span data-zh>再执行一次 <code>./ccmimolink sync</code>，然后重启 cc switch。</span>
+            <span data-en>Run <code>./ccmimolink sync</code> again, then restart cc switch.</span>
           </div></div>
         </div>
         <div class="faq-item">
@@ -1089,6 +1147,7 @@ MIMO_MODEL="mimo-v2.5-pro" ./ccmimolink
       <div class="footer-links">
         <a href="#features" data-zh>功能</a><a href="#features" data-en>Features</a>
         <a href="#quickstart" data-zh>快速开始</a><a href="#quickstart" data-en>Quick Start</a>
+        <a href="#cli">CLI</a>
         <a href="#config" data-zh>配置</a><a href="#config" data-en>Config</a>
       </div>
       <p>CCMimoLink — <span data-zh>面向 cc switch + Codex 的 Xiaomi MiMo 本地路由桥接器</span><span data-en>Xiaomi MiMo Local Routing Bridge for cc switch + Codex</span></p>
