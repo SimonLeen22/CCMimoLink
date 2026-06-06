@@ -4,7 +4,7 @@
 
 [🌐 Homepage](https://simonleen22.github.io/CCMimoLink/) · [中文文档](#中文) · [🍷 Windows 版本](https://github.com/2144291529/CCMimoLink-win) · [Releases](https://github.com/SimonLeen22/CCMimoLink/releases)
 
-**v1.2** — image requests now auto-route to `mimo-v2.5`, while text-first and multi-agent turns stay on `mimo-v2.5-pro`; GPT-family request model names are aliased automatically for Codex compatibility.
+**v1.2** — improved Codex sub-agent compatibility, safer multi-agent routing, and automatic image fallback to `mimo-v2.5`.
 
 ---
 
@@ -26,13 +26,15 @@ User → Codex → CCMimoLink (local proxy) → Xiaomi MiMo upstream
 ### Protocol Adaptation
 
 - **Responses → Chat Completions**: Translates OpenAI-style `/v1/responses` into MiMo's chat-completions format, injecting `instructions` as a system message when needed.
+- **Codex Sub-Agent Compatibility**: Flattens Codex multi-agent tool shapes into standard function tools so sub-agent and multi-tool turns remain usable upstream.
 - **Tool Compatibility Layer**: Preserves standard function tools, normalizes `tool_choice`, and filters unsupported built-in tools to prevent upstream failures.
 - **Multi-turn Continuation**: Maintains bounded in-memory state for response chains, supports `previous_response_id`, and replays function-call context and provider reasoning across turns.
 - **Streaming Fidelity**: Preserves true incremental streaming, emitting Responses-style events while reading from the MiMo upstream stream.
 
 ### Intelligent Routing
 
-- **Text-First + Vision Fallback**: Pure text requests stay on `mimo-v2.5-pro`; requests containing images automatically route the whole turn to `mimo-v2.5` for compatibility.
+- **Codex-Aware Model Routing**: Keeps text-first and multi-agent turns on `mimo-v2.5-pro`, while preserving Codex-style request semantics.
+- **Text-First + Vision Fallback**: Requests containing images automatically route the whole turn to `mimo-v2.5` for compatibility.
 - **Codex Model Alias Mapping**: GPT-family request model names from Codex (for example `gpt-5.4` / `gpt-5.4-mini`) are mapped onto MiMo backends automatically so Codex-side model labels do not break upstream routing.
 - **Dynamic Model Switching**: Switch between `mimo-v2.5` and `mimo-v2.5-pro` via built-in CLI subcommands (`model set` + `model restart`), environment variables, or startup flags.
 
@@ -106,7 +108,7 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink
 
 ## CLI Subcommands
 
-v1.2 keeps the built-in CLI workflow from v1.1 and adds safer image/model routing for Codex:
+v1.2 keeps the built-in CLI workflow from v1.1 and focuses on Codex sub-agent compatibility, safer multi-agent routing, and stable image fallback for mixed workloads:
 
 | Command | Description |
 | --- | --- |
@@ -232,13 +234,15 @@ CCMimoLink 不是又一个反向代理。它是一个主动协议适配层——
 ### 协议适配
 
 - **Responses → Chat Completions**：把 OpenAI 风格的 `/v1/responses` 请求翻译成 MiMo 的 chat-completions 格式，必要时把 `instructions` 注入为 system message
+- **Codex 子任务兼容层**：把 Codex 的多子任务工具形态展平成标准 function tool，尽量保证 sub-agent / 多工具轮次在上游可用
 - **Tool 兼容层**：保留标准 function tool，规范化 `tool_choice`，过滤不兼容的 built-in tool 避免整条请求崩掉
 - **多轮续接**：通过有界内存保存 response-chain 状态，支持 `previous_response_id`，在多轮交互中回放 function-call 上下文和 provider reasoning 状态
 - **流式保真**：保留真实的增量流式路径，在读取 MiMo 上游流时发出 Responses 风格事件
 
 ### 智能路由
 
-- **文本优先 + 视觉回落**：纯文本请求保留在 `mimo-v2.5-pro`；只要请求里带图片，整轮自动切到 `mimo-v2.5` 保证兼容。
+- **面向 Codex 的模型路由**：纯文本和多子任务轮次优先保留在 `mimo-v2.5-pro`，尽量维持 Codex 风格请求语义。
+- **文本优先 + 视觉回落**：只要请求里带图片，整轮自动切到 `mimo-v2.5` 保证兼容。
 - **Codex 模型号别名映射**：Codex 侧可能带来的 GPT 风格模型名（例如 `gpt-5.4` / `gpt-5.4-mini`）会自动映射到 MiMo 后端，避免上游因为模型名不认识而报错。
 - **动态模型切换**：通过内置 CLI 子命令（`model set` + `model restart`）、环境变量或启动参数，在 `mimo-v2.5` 与 `mimo-v2.5-pro` 之间动态切换。
 
@@ -312,7 +316,7 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink
 
 ## CLI 子命令
 
-v1.2 在保留 v1.1 内置 CLI 工作流的基础上，新增了更稳的图片/模型路由策略：
+v1.2 在保留 v1.1 内置 CLI 工作流的基础上，重点增强 Codex 子任务兼容性、多子任务路由稳定性，以及图文混合场景下的回落策略：
 
 | 命令 | 说明 |
 | --- | --- |

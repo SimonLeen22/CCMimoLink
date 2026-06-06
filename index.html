@@ -674,11 +674,11 @@
       <h1>CCMimoLink</h1>
       <p class="subtitle" data-zh>
         面向 <code>cc switch</code> + Codex 的 Xiaomi MiMo 本地路由桥接器。<br>
-        不只是反向代理——主动协议适配，让你在 Codex 里无缝使用 MiMo。
+        v1.2 重点增强 Codex 子任务兼容性、多子任务路由稳定性，并保留图文混合场景的自动回落能力。
       </p>
       <p class="subtitle" data-en>
         A local routing bridge that brings Xiaomi MiMo to <code>cc switch</code> + Codex.<br>
-        Not just a reverse proxy — an active protocol adapter for seamless MiMo integration.
+        v1.2 focuses on Codex sub-agent compatibility, safer multi-agent routing, and stable fallback for mixed text/image turns.
       </p>
       <div class="hero-actions">
         <a href="#quickstart" class="btn btn-primary">
@@ -752,6 +752,11 @@
           <p data-en>Translates OpenAI-style Responses into MiMo chat-completions format, injecting instructions as system messages.</p>
         </div>
         <div class="feature-card">
+          <h3 data-zh>Codex 子任务兼容层</h3><h3 data-en>Codex Sub-Agent Compatibility</h3>
+          <p data-zh>把 Codex 的多子任务工具形态展平成标准 function tool，尽量保证 sub-agent / 多工具轮次能被上游接收。</p>
+          <p data-en>Flattens Codex multi-agent tool shapes into standard function tools so upstream requests stay compatible during sub-agent and multi-tool turns.</p>
+        </div>
+        <div class="feature-card">
           <h3 data-zh>Tool 兼容层</h3><h3 data-en>Tool Compatibility</h3>
           <p data-zh>保留标准 function tool，规范化 tool_choice，过滤不兼容的 built-in tool 避免上游崩溃。</p>
           <p data-en>Preserves standard function tools, normalizes tool_choice, and filters incompatible built-in tools.</p>
@@ -767,9 +772,9 @@
           <p data-en>Preserves true incremental streaming, emitting Responses-style events from the MiMo upstream stream.</p>
         </div>
         <div class="feature-card">
-          <h3 data-zh>文本优先 + 视觉回落</h3><h3 data-en>Text-First + Vision Fallback</h3>
-          <p data-zh>纯文本请求保留在 mimo-v2.5-pro；只要请求中带图片，整轮自动切到 mimo-v2.5 保证兼容。</p>
-          <p data-en>Pure text requests stay on mimo-v2.5-pro; image-bearing turns automatically switch the whole request to mimo-v2.5 for compatibility.</p>
+          <h3 data-zh>面向 Codex 的模型路由</h3><h3 data-en>Codex-Aware Model Routing</h3>
+          <p data-zh>纯文本和多子任务轮次优先保留在 mimo-v2.5-pro；带图轮次再自动切到 mimo-v2.5。</p>
+          <p data-en>Text-first and multi-agent turns stay on mimo-v2.5-pro by default; image-bearing turns switch to mimo-v2.5 when needed.</p>
         </div>
         <div class="feature-card">
           <h3 data-zh>Codex 模型号别名映射</h3><h3 data-en>Codex Model Alias Mapping</h3>
@@ -878,8 +883,8 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink</code></pre>
           <span class="icon">💻</span>
           <span data-zh>CLI 子命令</span><span data-en>CLI Subcommands</span>
         </h2>
-        <p data-zh>v1.2：保留 v1.1 内置 CLI 的同时，新增更稳的图片/模型路由策略，兼容 Codex 的 GPT 风格模型名。</p>
-        <p data-en>v1.2: Keeps the built-in CLI from v1.1 and adds safer image/model routing plus GPT-family model alias compatibility for Codex.</p>
+        <p data-zh>v1.2：保留 v1.1 内置 CLI 的同时，重点增强 Codex 子任务兼容性、多子任务路由稳定性，并补充图文混合轮次的自动回落能力。</p>
+        <p data-en>v1.2: Keeps the built-in CLI from v1.1 while focusing on Codex sub-agent compatibility, safer multi-agent routing, and stable fallback for mixed text/image turns.</p>
       </div>
       <div class="config-table-wrap">
         <table>
