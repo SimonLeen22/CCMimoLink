@@ -665,8 +665,8 @@
     <div class="container">
       <div class="hero-badge">
         <span class="pulse"></span>
-        <span data-zh>开源 · 本地路由桥接器 · v1.1</span>
-        <span data-en>Open Source · Local Routing Bridge · v1.1</span>
+        <span data-zh>开源 · 本地路由桥接器 · v1.2</span>
+        <span data-en>Open Source · Local Routing Bridge · v1.2</span>
       </div>
       <p class="hero-author">
         <span data-zh>作者</span><span data-en>Author</span>：<a href="https://x.com/simonlin" target="_blank" rel="noopener">@simonlin</a> · <a href="https://github.com/SimonLeen22/CCMimoLink" target="_blank" rel="noopener">GitHub</a>
@@ -767,9 +767,14 @@
           <p data-en>Preserves true incremental streaming, emitting Responses-style events from the MiMo upstream stream.</p>
         </div>
         <div class="feature-card">
-          <h3 data-zh>多模态回落</h3><h3 data-en>Multimodal Fallback</h3>
-          <p data-zh>请求中带图片时，自动回落到 mimo-v2.5 保证兼容性。</p>
-          <p data-en>Image-containing requests automatically fall back to mimo-v2.5 for compatibility.</p>
+          <h3 data-zh>文本优先 + 视觉回落</h3><h3 data-en>Text-First + Vision Fallback</h3>
+          <p data-zh>纯文本请求保留在 mimo-v2.5-pro；只要请求中带图片，整轮自动切到 mimo-v2.5 保证兼容。</p>
+          <p data-en>Pure text requests stay on mimo-v2.5-pro; image-bearing turns automatically switch the whole request to mimo-v2.5 for compatibility.</p>
+        </div>
+        <div class="feature-card">
+          <h3 data-zh>Codex 模型号别名映射</h3><h3 data-en>Codex Model Alias Mapping</h3>
+          <p data-zh>Codex 侧的 GPT 风格模型名会自动映射到 MiMo 后端，避免上游因为模型名不识别而报错。</p>
+          <p data-en>GPT-family model names from Codex are aliased onto MiMo backends automatically so upstream routing stays compatible.</p>
         </div>
         <div class="feature-card">
           <h3 data-zh>动态模型切换</h3><h3 data-en>Dynamic Model Switch</h3>
@@ -857,8 +862,8 @@
 # <span data-zh>也可用环境变量方式（非 launchd 场景）</span><span data-en>Or use env vars (non-launchd scenarios)</span>
 MIMO_MODEL="mimo-v2.5" ./ccmimolink</code></pre>
           <div class="callout">
-            <span data-zh>图片请求不受影响，始终回落到 mimo-v2.5。</span>
-            <span data-en>Image requests are unaffected and always fall back to mimo-v2.5.</span>
+            <span data-zh>图片轮次始终自动切到 mimo-v2.5；纯文本轮次默认保留在 mimo-v2.5-pro。</span>
+            <span data-en>Image-bearing turns always switch to mimo-v2.5; text-only turns stay on mimo-v2.5-pro by default.</span>
           </div>
         </div>
       </div>
@@ -873,8 +878,8 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink</code></pre>
           <span class="icon">💻</span>
           <span data-zh>CLI 子命令</span><span data-en>CLI Subcommands</span>
         </h2>
-        <p data-zh>v1.1 新增：模型管理和配置同步现在可以直接通过主程序完成，无需外部脚本。</p>
-        <p data-en>New in v1.1: Model management and config sync can now be done directly through the main binary — no external scripts needed.</p>
+        <p data-zh>v1.2：保留 v1.1 内置 CLI 的同时，新增更稳的图片/模型路由策略，兼容 Codex 的 GPT 风格模型名。</p>
+        <p data-en>v1.2: Keeps the built-in CLI from v1.1 and adds safer image/model routing plus GPT-family model alias compatibility for Codex.</p>
       </div>
       <div class="config-table-wrap">
         <table>
@@ -1006,12 +1011,12 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink</code></pre>
             </tr>
             <tr>
               <td><code>MIMO_PROXY_MAX_CONCURRENT</code></td>
-              <td><code>1</code></td>
-              <td><span data-zh>最大并发上游请求数</span><span data-en>Maximum concurrent upstream requests</span></td>
+              <td><code>4</code></td>
+              <td><span data-zh>最大并发上游请求数（Codex 多子任务通常需要 2-3）</span><span data-en>Maximum concurrent upstream requests (Codex multi-agent turns usually need 2-3)</span></td>
             </tr>
             <tr>
               <td><code>MIMO_PROXY_MIN_INTERVAL_MS</code></td>
-              <td><code>1500</code></td>
+              <td><code>600</code></td>
               <td><span data-zh>上游请求最小间隔（毫秒）</span><span data-en>Minimum delay between upstream requests (ms)</span></td>
             </tr>
             <tr>

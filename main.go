@@ -28,22 +28,53 @@ const (
 	visionMimoModel          = "mimo-v2.5"
 	defaultProxyPort         = "9876"
 	defaultResponseStoreSize = 1000
+	defaultMaxConcurrent     = 4
+	defaultMinIntervalMS     = 600
+	describeImageToolName    = "describe_image"
+	maxDescribeRounds        = 2
 )
 
+// describeImageTool 是 proxy 主动注入的"读图"工具，OpenAI Chat Completions function 格式。
+// 当 mimo-v2.5-pro 收到带图请求时，会被引导调起这个工具，proxy 内部再用 mimo-v2.5 读图，
+// 把文字结论作为 role=tool 回灌给 pro，让 pro 用自然语言回答 Codex。
+var describeImageTool = map[string]interface{}{
+	"type": "function",
+	"function": map[string]interface{}{
+		"name": describeImageToolName,
+		"description": "Read the contents of an image and return a textual description. " +
+			"Call this when the user's request includes or references an image. " +
+			"Use the returned description to answer the user's question.",
+		"parameters": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"image_url": map[string]interface{}{
+					"type":        "string",
+					"description": "URL or data URI of the image to describe",
+				},
+				"prompt": map[string]interface{}{
+					"type":        "string",
+					"description": "What to look for in the image (e.g. 'describe in detail', 'read the text')",
+				},
+			},
+			"required": []string{"image_url", "prompt"},
+		},
+	},
+}
+
 var (
-	mimoBase      = envOrDefault("MIMO_BASE_URL", defaultMimoBase)
-	mimoKey       = strings.TrimSpace(os.Getenv("MIMO_API_KEY"))
-	mimoModel     = envOrDefault("MIMO_MODEL", defaultMimoModel)
-	proxyPort     = envOrDefault("MIMO_PROXY_PORT", defaultProxyPort)
-	client        = &http.Client{}
-	limiter       = newUpstreamLimiter()
-	responseStore = newResponseStore(envIntOrDefault("MIMO_PROXY_RESPONSE_STORE_MAX", defaultResponseStoreSize))
-	skipCCSwitchSync = strings.EqualFold(strings.TrimSpace(os.Getenv("MIMO_PROXY_SKIP_CC_SWITCH_SYNC")), "true")
-	homeDir             = userHomeDir()
+	mimoBase             = envOrDefault("MIMO_BASE_URL", defaultMimoBase)
+	mimoKey              = strings.TrimSpace(os.Getenv("MIMO_API_KEY"))
+	mimoModel            = envOrDefault("MIMO_MODEL", defaultMimoModel)
+	proxyPort            = envOrDefault("MIMO_PROXY_PORT", defaultProxyPort)
+	client               = &http.Client{}
+	limiter              = newUpstreamLimiter()
+	responseStore        = newResponseStore(envIntOrDefault("MIMO_PROXY_RESPONSE_STORE_MAX", defaultResponseStoreSize))
+	skipCCSwitchSync     = strings.EqualFold(strings.TrimSpace(os.Getenv("MIMO_PROXY_SKIP_CC_SWITCH_SYNC")), "true")
+	homeDir              = userHomeDir()
 	ccSwitchSettingsPath = envOrDefault("CC_SWITCH_SETTINGS_PATH", filepath.Join(homeDir, ".cc-switch", "settings.json"))
-	ccSwitchDBPath = envOrDefault("CC_SWITCH_DB_PATH", filepath.Join(homeDir, ".cc-switch", "cc-switch.db"))
-	codexConfigPath = envOrDefault("CODEX_CONFIG_PATH", filepath.Join(homeDir, ".codex", "config.toml"))
-	codexAuthPath = envOrDefault("CODEX_AUTH_PATH", filepath.Join(homeDir, ".codex", "auth.json"))
+	ccSwitchDBPath       = envOrDefault("CC_SWITCH_DB_PATH", filepath.Join(homeDir, ".cc-switch", "cc-switch.db"))
+	codexConfigPath      = envOrDefault("CODEX_CONFIG_PATH", filepath.Join(homeDir, ".codex", "config.toml"))
+	codexAuthPath        = envOrDefault("CODEX_AUTH_PATH", filepath.Join(homeDir, ".codex", "auth.json"))
 )
 
 func applyModelFlag() {
@@ -89,6 +120,20 @@ func envIntOrDefault(name string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func envBoolOrDefault(name string, fallback bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	switch v {
+	case "":
+		return fallback
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func userHomeDir() string {
@@ -284,6 +329,16 @@ func writeErrorResponse(w http.ResponseWriter, status int, code, message string)
 			"type":    "invalid_request_error",
 		},
 	})
+}
+
+func redactSensitive(message string, inbound *http.Request) string {
+	for _, secret := range []string{mimoKey, resolveMimoKey(inbound)} {
+		secret = strings.TrimSpace(secret)
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+		}
+	}
+	return message
 }
 
 func compactUnsupportedMessage() string {
@@ -681,8 +736,12 @@ func runStartupSyncOnly() error {
 }
 
 func newUpstreamLimiter() *UpstreamLimiter {
-	concurrency := envIntOrDefault("MIMO_PROXY_MAX_CONCURRENT", 1)
-	minIntervalMS := envIntOrDefault("MIMO_PROXY_MIN_INTERVAL_MS", 1500)
+	concurrency := envIntOrDefault("MIMO_PROXY_MAX_CONCURRENT", defaultMaxConcurrent)
+	minIntervalMS := envIntOrDefault("MIMO_PROXY_MIN_INTERVAL_MS", defaultMinIntervalMS)
+	if envBoolOrDefault("MIMO_PROXY_LEGACY_MODE", false) {
+		concurrency = 1
+		minIntervalMS = 1500
+	}
 	return &UpstreamLimiter{
 		sem:      make(chan struct{}, concurrency),
 		interval: time.Duration(minIntervalMS) * time.Millisecond,
@@ -827,6 +886,7 @@ func setMimoHeaders(req *http.Request, inbound *http.Request) error {
 // ---- Responses API 请求 ----
 
 type ResponsesRequest struct {
+	Model              string          `json:"model,omitempty"`
 	Instructions       string          `json:"instructions,omitempty"`
 	Input              interface{}     `json:"input"`
 	Stream             bool            `json:"stream"`
@@ -871,6 +931,42 @@ type ResponseEnvelope struct {
 	ProviderMessage *ChatMessage
 }
 
+// parsedChatResp 是 executeUpstreamChat 的解析结果，覆盖 tool_calls / content /
+// reasoning_content / finish_reason / usage。非流式路径靠它判断是否要触发
+// describe_image 子任务循环。
+type parsedChatResp struct {
+	ID               string
+	Content          string
+	ReasoningContent string
+	FinishReason     string
+	ToolCalls        []parsedToolCall
+	Usage            *MimoUsage
+	ErrorStatus      int
+	ErrorCode        string
+	ErrorMessage     string
+}
+
+type parsedToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
+}
+
+type describeImageCall struct {
+	CallID    string
+	ImageURL  string
+	Prompt    string
+	ErrorText string
+}
+
+func chatError(status int, code, message string) parsedChatResp {
+	return parsedChatResp{ErrorStatus: status, ErrorCode: code, ErrorMessage: message}
+}
+
+func (p parsedChatResp) hasError() bool {
+	return p.ErrorCode != ""
+}
+
 // ---- 流式 chunk ----
 
 type ChatStreamChunk struct {
@@ -906,6 +1002,18 @@ func convertUsage(u *MimoUsage) *CodexUsage {
 		OutputTokens: u.CompletionTokens,
 		TotalTokens:  u.TotalTokens,
 	}
+}
+
+func addUsage(dst **MimoUsage, src *MimoUsage) {
+	if src == nil {
+		return
+	}
+	if *dst == nil {
+		*dst = &MimoUsage{}
+	}
+	(*dst).PromptTokens += src.PromptTokens
+	(*dst).CompletionTokens += src.CompletionTokens
+	(*dst).TotalTokens += src.TotalTokens
 }
 
 // ---- 解析 input ----
@@ -1061,6 +1169,74 @@ func parseInput(input interface{}) ([]ChatMessage, bool) {
 	return []ChatMessage{{Role: "user", Content: fmt.Sprintf("%v", input)}}, false
 }
 
+func stripImagesForDescribe(messages []ChatMessage) (map[string]string, bool) {
+	imageMap := map[string]string{}
+	phIdx := 0
+	for mi := range messages {
+		rawParts, ok := messages[mi].Content.([]interface{})
+		if !ok {
+			continue
+		}
+		var newParts []interface{}
+		textBuf := ""
+		flushText := func() {
+			if textBuf != "" {
+				newParts = append(newParts, map[string]interface{}{"type": "text", "text": textBuf})
+				textBuf = ""
+			}
+		}
+		for _, rp := range rawParts {
+			p, ok := rp.(map[string]interface{})
+			if !ok {
+				flushText()
+				newParts = append(newParts, rp)
+				continue
+			}
+			ptype, _ := p["type"].(string)
+			switch ptype {
+			case "image_url":
+				realURL := ""
+				if iu, ok := p["image_url"].(map[string]interface{}); ok {
+					realURL = stringValue(iu["url"])
+				} else if iu, ok := p["image_url"].(map[string]string); ok {
+					realURL = strings.TrimSpace(iu["url"])
+				}
+				if realURL == "" {
+					flushText()
+					newParts = append(newParts, p)
+					continue
+				}
+				placeholder := fmt.Sprintf("placeholder://image_%d", phIdx)
+				imageMap[placeholder] = realURL
+				phIdx++
+				flushText()
+				newParts = append(newParts, map[string]interface{}{
+					"type": "text",
+					"text": fmt.Sprintf("[image attached, call describe_image with image_url=\"%s\" to read it]", placeholder),
+				})
+			case "text", "input_text":
+				if t, ok := p["text"].(string); ok {
+					textBuf += t
+				} else {
+					flushText()
+					newParts = append(newParts, p)
+				}
+			default:
+				flushText()
+				newParts = append(newParts, p)
+			}
+		}
+		flushText()
+		if len(newParts) > 0 {
+			messages[mi].Content = newParts
+		}
+	}
+	if len(imageMap) == 0 {
+		return nil, false
+	}
+	return imageMap, true
+}
+
 // ---- 透传稳定字段 ----
 
 func rawJSONPresent(raw json.RawMessage) bool {
@@ -1108,6 +1284,9 @@ type normalizedTools struct {
 	ForwardedCount   int
 	DroppedCount     int
 	DroppedToolTypes []string
+	// HasDescribeImage 标记本次请求的 Converted 列表中是否含 describe_image 工具。
+	// 用于 handleResponses 决定 hasImages=true 时是否仍走 v2.5-pro。
+	HasDescribeImage bool
 }
 
 func stringValue(v interface{}) string {
@@ -1132,6 +1311,50 @@ func emptyToolParameters() map[string]interface{} {
 	return map[string]interface{}{
 		"properties": map[string]interface{}{},
 		"type":       "object",
+	}
+}
+
+// isNamespaceTool 判断一个工具条目是不是 namespace 形态（多子任务工具）。
+// Codex 发的多子任务工具长这样：{type:"multi_agent_v1", name:"spawn_agent", ...}
+// 或带 namespace 字段：{type:"function", namespace:"multi_agent_v1", name:"spawn_agent", ...}。
+// 仅在 LEGACY_MODE=false 时被 convertToolsStable 调用。
+func isNamespaceTool(tool map[string]interface{}) bool {
+	if ns := stringValue(tool["namespace"]); ns != "" {
+		return true
+	}
+	if t := stringValue(tool["type"]); strings.HasPrefix(t, "multi_agent") {
+		return true
+	}
+	return false
+}
+
+// flattenNamespaceTool 把 namespace 形态的工具展平为 OpenAI Chat Completions
+// function 工具：{type:"function", function:{name, description, parameters}}。
+// 返回 nil 表示无法展平（缺 name 等）。
+func flattenNamespaceTool(tool map[string]interface{}) map[string]interface{} {
+	name := stringValue(tool["name"])
+	if name == "" {
+		return nil
+	}
+	description := stringValue(tool["description"])
+	parameters := tool["parameters"]
+	if parameters == nil {
+		parameters = tool["input_schema"]
+	}
+	if parameters == nil {
+		parameters = emptyToolParameters()
+	}
+	convertedFn := map[string]interface{}{
+		"description": description,
+		"name":        name,
+		"parameters":  parameters,
+	}
+	if strict, ok := tool["strict"]; ok {
+		convertedFn["strict"] = strict
+	}
+	return map[string]interface{}{
+		"function": convertedFn,
+		"type":     "function",
 	}
 }
 
@@ -1164,11 +1387,21 @@ func (n normalizedTools) filterByNames(allowed map[string]struct{}) normalizedTo
 	n.Converted = filtered
 	n.SupportedNames = names
 	n.ForwardedCount = len(filtered)
+	n.HasDescribeImage = false
+	if _, ok := names[describeImageToolName]; ok {
+		n.HasDescribeImage = true
+	}
 	return n
 }
 
 func convertToolsStable(raw json.RawMessage) normalizedTools {
 	result := normalizedTools{SupportedNames: map[string]struct{}{}}
+	markSupported := func(name string) {
+		result.SupportedNames[name] = struct{}{}
+		if name == describeImageToolName {
+			result.HasDescribeImage = true
+		}
+	}
 	if !rawJSONPresent(raw) {
 		return result
 	}
@@ -1180,6 +1413,7 @@ func convertToolsStable(raw json.RawMessage) normalizedTools {
 	}
 	result.InputCount = len(tools)
 	result.Converted = make([]map[string]interface{}, 0, len(tools))
+	legacyMode := envBoolOrDefault("MIMO_PROXY_LEGACY_MODE", false)
 	for _, tool := range tools {
 		if fn, ok := tool["function"].(map[string]interface{}); ok {
 			name := stringValue(fn["name"])
@@ -1204,11 +1438,31 @@ func convertToolsStable(raw json.RawMessage) normalizedTools {
 				"function": convertedFn,
 				"type":     "function",
 			})
-			result.SupportedNames[name] = struct{}{}
+			markSupported(name)
 			continue
 		}
 
 		toolType := stringValue(tool["type"])
+		// namespace 工具展平：Codex 默认发的 multi_agent_v1 工具是 namespace 形态
+		// （{type:"multi_agent_v1", name:"spawn_agent", ...}），OpenAI Chat Completions
+		// 协议没有 namespace 概念。这里展平为顶层 function 工具，让 mimo-v2.5-pro
+		// 能直接看到 spawn_agent / send_input / wait_agent / close_agent 等。
+		// LEGACY_MODE 下保留原 drop 行为。
+		if !legacyMode && toolType != "" && toolType != "function" && isNamespaceTool(tool) {
+			if flat := flattenNamespaceTool(tool); flat != nil {
+				result.Converted = append(result.Converted, flat)
+				if fn, ok := flat["function"].(map[string]interface{}); ok {
+					if n := stringValue(fn["name"]); n != "" {
+						markSupported(n)
+					}
+				}
+				continue
+			}
+			result.DroppedCount++
+			result.DroppedToolTypes = appendUnique(result.DroppedToolTypes, toolType+"_invalid")
+			continue
+		}
+
 		if toolType != "" && toolType != "function" {
 			result.DroppedCount++
 			result.DroppedToolTypes = appendUnique(result.DroppedToolTypes, toolType)
@@ -1244,7 +1498,7 @@ func convertToolsStable(raw json.RawMessage) normalizedTools {
 			"function": convertedFn,
 			"type":     "function",
 		})
-		result.SupportedNames[name] = struct{}{}
+		markSupported(name)
 	}
 	result.ForwardedCount = len(result.Converted)
 	return result
@@ -1458,18 +1712,17 @@ func parseTextToolCalls(content string) ([]map[string]interface{}, bool) {
 
 // ---- 非流式 ----
 
-func handleNonStream(w http.ResponseWriter, inbound *http.Request, chatReq ChatRequest) {
+// executeUpstreamChat 发送 chat completions 请求到 mimo，解析 tool_calls /
+// content / reasoning_content / finish_reason / usage，返回 parsedChatResp。
+func executeUpstreamChat(inbound *http.Request, chatReq ChatRequest) parsedChatResp {
 	body, _ := json.Marshal(chatReq)
 	req, _ := http.NewRequest("POST", mimoBase+"/chat/completions", bytes.NewReader(body))
 	if err := setMimoHeaders(req, inbound); err != nil {
-		writeErrorResponse(w, http.StatusInternalServerError, "missing_mimo_api_key", err.Error())
-		return
+		return chatError(http.StatusInternalServerError, "missing_mimo_api_key", err.Error())
 	}
-
 	resp, err := sendUpstream(req)
 	if err != nil {
-		writeErrorResponse(w, http.StatusBadGateway, "upstream_request_failed", err.Error())
-		return
+		return chatError(http.StatusBadGateway, "upstream_request_failed", err.Error())
 	}
 	var respBody []byte
 	defer func() { closeUpstream(resp, respBody) }()
@@ -1477,9 +1730,9 @@ func handleNonStream(w http.ResponseWriter, inbound *http.Request, chatReq ChatR
 
 	respBody, _ = io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		log.Printf("[Proxy] MiMo error %d: %s", resp.StatusCode, string(respBody))
-		writeErrorResponse(w, resp.StatusCode, "upstream_error", string(respBody))
-		return
+		message := redactSensitive(string(respBody), inbound)
+		log.Printf("[Proxy] MiMo error %d: %s", resp.StatusCode, message)
+		return chatError(resp.StatusCode, "upstream_error", message)
 	}
 
 	var chatResp struct {
@@ -1494,61 +1747,346 @@ func handleNonStream(w http.ResponseWriter, inbound *http.Request, chatReq ChatR
 		} `json:"choices"`
 		Usage *MimoUsage `json:"usage"`
 	}
-	json.Unmarshal(respBody, &chatResp)
+	if err := json.Unmarshal(respBody, &chatResp); err != nil {
+		return chatError(http.StatusBadGateway, "upstream_parse_failed", err.Error())
+	}
 
-	var output []map[string]interface{}
-	var assistantMessage *ChatMessage
-	if len(chatResp.Choices) > 0 {
-		msg := chatResp.Choices[0].Message
+	out := parsedChatResp{ID: chatResp.ID, Usage: chatResp.Usage}
+	if len(chatResp.Choices) == 0 {
+		return chatError(http.StatusBadGateway, "upstream_empty_response", "upstream returned no choices")
+	}
+	msg := chatResp.Choices[0].Message
+	out.Content = msg.Content
+	out.ReasoningContent = msg.ReasoningContent
+	out.FinishReason = msg.FinishReason
+	if msg.ToolCalls != nil {
+		if tc, ok := msg.ToolCalls.([]interface{}); ok {
+			for _, call := range tc {
+				c, ok := call.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				fn, _ := c["function"].(map[string]interface{})
+				out.ToolCalls = append(out.ToolCalls, parsedToolCall{
+					ID:        stringValue(c["id"]),
+					Name:      stringValue(fn["name"]),
+					Arguments: stringValue(fn["arguments"]),
+				})
+			}
+		}
+	}
+	return out
+}
 
-		if msg.ReasoningContent != "" {
-			output = append(output, map[string]interface{}{
-				"type":    "reasoning",
-				"summary": []map[string]string{{"type": "summary_text", "text": summarizeReasoning(msg.ReasoningContent)}},
-			})
+// callDescribeImage 在 proxy 内部用 mimo-v2.5 跑一次 chat completions 读图，
+// 返回文字描述。出错时把错误信息作为描述返回（不挂掉请求）。
+// imageMap 用于把 placeholder://image_N 解析为真实图 URL（被剥图的 mimo-v2.5-pro
+// 调 describe_image 时只能传 placeholder，真图在 proxy 侧还原）。
+func callDescribeImage(inbound *http.Request, call describeImageCall, imageMap map[string]string) parsedChatResp {
+	prompt := call.Prompt
+	if prompt == "" {
+		prompt = "Describe the image in detail."
+	}
+	realURL := call.ImageURL
+	if imageMap != nil {
+		if u, ok := imageMap[call.ImageURL]; ok {
+			realURL = u
+		} else if strings.HasPrefix(call.ImageURL, "placeholder://") {
+			return chatError(http.StatusBadRequest, "describe_image_unknown_placeholder", "unknown image placeholder: "+call.ImageURL)
+		}
+	}
+	if strings.TrimSpace(realURL) == "" {
+		return chatError(http.StatusBadRequest, "describe_image_missing_image_url", "describe_image requires image_url")
+	}
+	visionReq := ChatRequest{
+		Model: visionMimoModel,
+		Messages: []ChatMessage{{
+			Role: "user",
+			Content: []map[string]interface{}{
+				{"type": "image_url", "image_url": map[string]string{"url": realURL}},
+				{"type": "text", "text": prompt},
+			},
+		}},
+		Stream: false,
+	}
+	resp := executeUpstreamChat(inbound, visionReq)
+	if resp.hasError() {
+		return resp
+	}
+	desc := strings.TrimSpace(resp.Content)
+	if desc == "" {
+		return chatError(http.StatusBadGateway, "describe_image_empty_content", "vision model returned empty content")
+	}
+	resp.Content = desc
+	return resp
+}
+
+// extractDescribeImageCalls 从 parsedChatResp 挑出 name==describe_image 的 tool_call。
+func extractDescribeImageCalls(chatResp parsedChatResp) []describeImageCall {
+	var out []describeImageCall
+	for _, tc := range chatResp.ToolCalls {
+		if tc.Name != describeImageToolName {
+			continue
+		}
+		var args struct {
+			ImageURL string `json:"image_url"`
+			Prompt   string `json:"prompt"`
+		}
+		if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+			out = append(out, describeImageCall{CallID: tc.ID, ErrorText: "invalid describe_image arguments: " + err.Error()})
+			continue
+		}
+		out = append(out, describeImageCall{
+			CallID:   tc.ID,
+			ImageURL: strings.TrimSpace(args.ImageURL),
+			Prompt:   args.Prompt,
+		})
+	}
+	return out
+}
+
+// assistantToolCallsFromParsed 把 parsedToolCall 序列化为 assistant message 的
+// tool_calls 字段（OpenAI Chat Completions 形态），用于回灌给下一轮 pro 请求。
+func assistantToolCallsFromParsed(calls []parsedToolCall) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(calls))
+	for _, c := range calls {
+		out = append(out, map[string]interface{}{
+			"id":   c.ID,
+			"type": "function",
+			"function": map[string]string{
+				"name":      c.Name,
+				"arguments": c.Arguments,
+			},
+		})
+	}
+	return out
+}
+
+// handleNonStream 运行上游 chat completions 一次，必要时拦截 describe_image
+// tool_call 跑多轮（最多 maxDescribeRounds），把 mimo-v2.5 读图回执作为
+// role=tool 注入下一轮 messages。imageMap 用于把 placeholder://image_N 还原
+// 为真实图 URL。
+func handleNonStream(w http.ResponseWriter, inbound *http.Request, chatReq ChatRequest, imageMap map[string]string) {
+	envelope, errResp := runNonStream(inbound, chatReq, imageMap, "")
+	if errResp != nil {
+		writeErrorResponse(w, errResp.ErrorStatus, errResp.ErrorCode, errResp.ErrorMessage)
+		return
+	}
+	writeJSON(w, http.StatusOK, envelope.ResponseObject)
+}
+
+func runNonStream(inbound *http.Request, chatReq ChatRequest, imageMap map[string]string, responseID string) (ResponseEnvelope, *parsedChatResp) {
+	// describe_image 子任务循环：最多跑 maxDescribeRounds 轮。
+	// 拦截 pro emit 的 describe_image tool_call，proxy 内部用 mimo-v2.5 读图，
+	// 把回执作为 role=tool 注入下一轮 messages，让 pro 给自然语言回答。
+	// 中间轮（pro 调 describe_image 那轮）的 tool_call 链路在 proxy 内部消化，
+	// 最终 Responses API 序列化时只暴露给 Codex 最后一轮的输出。
+	workingReq := chatReq
+	workingReq.Stream = false
+	var totalUsage *MimoUsage
+	for round := 0; round < maxDescribeRounds; round++ {
+		chatResp := executeUpstreamChat(inbound, workingReq)
+		addUsage(&totalUsage, chatResp.Usage)
+		if chatResp.hasError() {
+			return ResponseEnvelope{}, &chatResp
 		}
 
-		var toolCallsOutput []map[string]interface{}
-		if msg.ToolCalls != nil {
-			if tc, ok := msg.ToolCalls.([]interface{}); ok {
-				for _, call := range tc {
-					c, ok := call.(map[string]interface{})
-					if !ok {
-						continue
-					}
-					fn, _ := c["function"].(map[string]interface{})
-					toolCallsOutput = append(toolCallsOutput, map[string]interface{}{
-						"type":      "function_call",
-						"call_id":   c["id"],
-						"name":      fn["name"],
-						"arguments": fn["arguments"],
-					})
+		descCalls := extractDescribeImageCalls(chatResp)
+		if len(descCalls) == 0 {
+			chatResp.Usage = totalUsage
+			return buildNonStreamEnvelope(workingReq, chatResp, responseID), nil
+		}
+
+		workingReq.Messages = append(workingReq.Messages, ChatMessage{
+			Role:      "assistant",
+			Content:   "",
+			ToolCalls: assistantToolCallsFromParsed(chatResp.ToolCalls),
+		})
+		for _, dc := range descCalls {
+			var desc string
+			var usage *MimoUsage
+			if dc.ErrorText != "" {
+				desc = dc.ErrorText
+			} else {
+				descResp := callDescribeImage(inbound, dc, imageMap)
+				addUsage(&totalUsage, descResp.Usage)
+				usage = descResp.Usage
+				if descResp.hasError() {
+					desc = descResp.ErrorCode + ": " + descResp.ErrorMessage
+				} else {
+					desc = descResp.Content
 				}
 			}
-		}
-		output = append(output, toolCallsOutput...)
-
-		messageContent := msg.Content
-		if msg.Content != "" {
-			if calls, ok := parseTextToolCalls(msg.Content); ok {
-				output = append(output, calls...)
-				assistantMessage = buildStoredAssistantMessage("", msg.ReasoningContent, toolCallsFromResponseItems(calls))
-			} else {
-				output = append(output, map[string]interface{}{
-					"type":    "message",
-					"role":    "assistant",
-					"content": []map[string]string{{"type": "output_text", "text": msg.Content}},
-				})
-				assistantMessage = buildStoredAssistantMessage(messageContent, msg.ReasoningContent, toolCallsFromResponseItems(toolCallsOutput))
-			}
-		} else {
-			assistantMessage = buildStoredAssistantMessage("", msg.ReasoningContent, toolCallsFromResponseItems(toolCallsOutput))
+			log.Printf("[Proxy] describe_image: call_id=%s desc_len=%d usage=%v", dc.CallID, len(desc), usage)
+			workingReq.Messages = append(workingReq.Messages, ChatMessage{
+				Role:       "tool",
+				Content:    desc,
+				ToolCallID: dc.CallID,
+			})
 		}
 	}
 
-	result := makeResponse(chatResp.ID, "completed", chatReq.Model, output, convertUsage(chatResp.Usage))
-	envelope := finalizeResponseEnvelope(result, chatReq, assistantMessage)
-	writeJSON(w, http.StatusOK, envelope.ResponseObject)
+	log.Printf("[Proxy] describe_image exceeded max rounds=%d", maxDescribeRounds)
+	errResp := chatError(http.StatusBadGateway, "describe_image_max_rounds", "describe_image did not converge within max rounds")
+	return ResponseEnvelope{}, &errResp
+}
+
+func buildNonStreamEnvelope(chatReq ChatRequest, chatResp parsedChatResp, responseID string) ResponseEnvelope {
+	var output []map[string]interface{}
+	var assistantMessage *ChatMessage
+
+	if responseID == "" {
+		responseID = chatResp.ID
+	}
+	if responseID == "" {
+		responseID = fmt.Sprintf("resp-%d", time.Now().UnixMilli())
+	}
+
+	// reasoning
+	if chatResp.ReasoningContent != "" {
+		output = append(output, map[string]interface{}{
+			"type":    "reasoning",
+			"summary": []map[string]string{{"type": "summary_text", "text": summarizeReasoning(chatResp.ReasoningContent)}},
+		})
+	}
+
+	// tool_calls → function_call output items
+	var toolCallsOutput []map[string]interface{}
+	for _, tc := range chatResp.ToolCalls {
+		toolCallsOutput = append(toolCallsOutput, map[string]interface{}{
+			"type":      "function_call",
+			"call_id":   tc.ID,
+			"name":      tc.Name,
+			"arguments": tc.Arguments,
+		})
+	}
+	output = append(output, toolCallsOutput...)
+
+	// content：含 XML 兜底
+	if chatResp.Content != "" {
+		if calls, ok := parseTextToolCalls(chatResp.Content); ok {
+			output = append(output, calls...)
+			assistantMessage = buildStoredAssistantMessage("", chatResp.ReasoningContent, toolCallsFromResponseItems(calls))
+		} else {
+			output = append(output, map[string]interface{}{
+				"type":    "message",
+				"role":    "assistant",
+				"content": []map[string]string{{"type": "output_text", "text": chatResp.Content}},
+			})
+			assistantMessage = buildStoredAssistantMessage(chatResp.Content, chatResp.ReasoningContent, toolCallsFromResponseItems(toolCallsOutput))
+		}
+	} else {
+		assistantMessage = buildStoredAssistantMessage("", chatResp.ReasoningContent, toolCallsFromResponseItems(toolCallsOutput))
+	}
+
+	result := makeResponse(responseID, "completed", chatReq.Model, output, convertUsage(chatResp.Usage))
+	return finalizeResponseEnvelope(result, chatReq, assistantMessage)
+}
+
+func writeImageUnsupportedResponse(w http.ResponseWriter, stream bool, model string) {
+	message := "mimo-v2.5-pro does not accept inline image input. Route image tasks to explicit model mimo-v2.5, or send text-only input to mimo-v2.5-pro."
+	if !stream {
+		writeErrorResponse(w, http.StatusBadRequest, "image_not_supported_by_model", message)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeErrorResponse(w, http.StatusInternalServerError, "streaming_not_supported", "Streaming not supported")
+		return
+	}
+	streamID := fmt.Sprintf("resp-%d", time.Now().UnixMilli())
+	sendEvent := func(eventType string, data map[string]interface{}) {
+		data["type"] = eventType
+		b, _ := json.Marshal(data)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+	errResp := chatError(http.StatusBadRequest, "image_not_supported_by_model", message)
+	sendEvent("response.created", map[string]interface{}{
+		"response": makeResponse(streamID, "in_progress", model, []map[string]interface{}{}, nil),
+	})
+	sendEvent("response.completed", map[string]interface{}{
+		"response": streamErrorResponse(streamID, model, &errResp),
+	})
+}
+
+func streamErrorResponse(id, model string, errResp *parsedChatResp) map[string]interface{} {
+	response := makeResponse(id, "failed", model, []map[string]interface{}{}, nil)
+	response["error"] = map[string]interface{}{
+		"code":    errResp.ErrorCode,
+		"message": errResp.ErrorMessage,
+		"type":    "invalid_request_error",
+	}
+	return response
+}
+
+func handleStreamFromNonStream(w http.ResponseWriter, inbound *http.Request, chatReq ChatRequest, imageMap map[string]string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeErrorResponse(w, http.StatusInternalServerError, "streaming_not_supported", "Streaming not supported")
+		return
+	}
+
+	streamID := fmt.Sprintf("resp-%d", time.Now().UnixMilli())
+	sendEvent := func(eventType string, data map[string]interface{}) {
+		data["type"] = eventType
+		b, _ := json.Marshal(data)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+
+	sendEvent("response.created", map[string]interface{}{
+		"response": makeResponse(streamID, "in_progress", chatReq.Model, []map[string]interface{}{}, nil),
+	})
+
+	envelope, errResp := runNonStream(inbound, chatReq, imageMap, streamID)
+	if errResp != nil {
+		response := streamErrorResponse(streamID, chatReq.Model, errResp)
+		sendEvent("response.completed", map[string]interface{}{"response": response})
+		return
+	}
+
+	if output, ok := envelope.ResponseObject["output"].([]map[string]interface{}); ok {
+		for outputIndex, item := range output {
+			sendEvent("response.output_item.added", map[string]interface{}{"output_index": outputIndex, "item": item})
+			if itemType := stringValue(item["type"]); itemType == "message" {
+				text := ""
+				if content, ok := item["content"].([]map[string]string); ok && len(content) > 0 {
+					text = content[0]["text"]
+				}
+				sendEvent("response.content_part.added", map[string]interface{}{
+					"output_index":  outputIndex,
+					"content_index": 0,
+					"part":          map[string]string{"type": "output_text", "text": ""},
+				})
+				if text != "" {
+					sendEvent("response.output_text.delta", map[string]interface{}{
+						"output_index":  outputIndex,
+						"content_index": 0,
+						"delta":         text,
+					})
+				}
+				sendEvent("response.output_text.done", map[string]interface{}{"output_index": outputIndex, "content_index": 0})
+				sendEvent("response.content_part.done", map[string]interface{}{
+					"output_index":  outputIndex,
+					"content_index": 0,
+					"part":          map[string]string{"type": "output_text"},
+				})
+			}
+			sendEvent("response.output_item.done", map[string]interface{}{"output_index": outputIndex, "item": item})
+		}
+	}
+
+	sendEvent("response.completed", map[string]interface{}{
+		"response": envelope.ResponseObject,
+	})
 }
 
 // ---- 流式 ----
@@ -1855,6 +2393,10 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	toolNames := rawToolNames(req.Tools)
 	instructionsLen := len(req.Instructions)
+	legacyMode := envBoolOrDefault("MIMO_PROXY_LEGACY_MODE", false)
+	if legacyMode {
+		log.Printf("[Proxy] LEGACY MODE on: namespace flatten=off, describe_image=off, concurrency=1/1500ms")
+	}
 	log.Printf("[Proxy] tools=%v instructions_len=%d", toolNames, instructionsLen)
 
 	messages, hasImages := parseInput(req.Input)
@@ -1887,8 +2429,14 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	chatThinking := mapReasoningToThinking(req.Reasoning)
 
-	selectedModel := mimoModel
-	if hasImages {
+	selectedModel := resolveRequestModel(req.Model, hasImages)
+	if rawModel := strings.TrimSpace(req.Model); rawModel != "" {
+		if _, err := resolveModelName(rawModel); err != nil {
+			log.Printf("[Proxy] aliasing unsupported request model %q to %s", rawModel, selectedModel)
+		}
+	}
+	if hasImages && selectedModel != visionMimoModel {
+		log.Printf("[Proxy] image input detected; downgrading request model from %s to %s", selectedModel, visionMimoModel)
 		selectedModel = visionMimoModel
 	}
 
@@ -1936,7 +2484,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	if req.Stream {
 		handleStream(w, r, chatReq)
 	} else {
-		handleNonStream(w, r, chatReq)
+		handleNonStream(w, r, chatReq, nil)
 	}
 }
 
@@ -1976,8 +2524,14 @@ var validModels = map[string]bool{
 
 // modelAliases maps short names to full model identifiers.
 var modelAliases = map[string]string{
-	"pro":  "mimo-v2.5-pro",
-	"v2.5": "mimo-v2.5",
+	"pro":          "mimo-v2.5-pro",
+	"v2.5":         "mimo-v2.5",
+	"gpt-5":        "mimo-v2.5-pro",
+	"gpt-5.4":      "mimo-v2.5-pro",
+	"gpt-5.5":      "mimo-v2.5-pro",
+	"gpt-5-mini":   "mimo-v2.5-pro",
+	"gpt-5.4-mini": "mimo-v2.5-pro",
+	"gpt-5.5-mini": "mimo-v2.5-pro",
 }
 
 func resolveModelName(name string) (string, error) {
@@ -1989,6 +2543,26 @@ func resolveModelName(name string) (string, error) {
 		return full, nil
 	}
 	return "", fmt.Errorf("unknown model %q; valid: mimo-v2.5-pro, mimo-v2.5 (aliases: pro, v2.5)", name)
+}
+
+func resolveRequestModel(raw string, hasImages bool) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		if hasImages {
+			return visionMimoModel
+		}
+		return mimoModel
+	}
+	if resolved, err := resolveModelName(name); err == nil {
+		if hasImages && strings.HasPrefix(name, "gpt-5") {
+			return visionMimoModel
+		}
+		return resolved
+	}
+	if hasImages {
+		return visionMimoModel
+	}
+	return mimoModel
 }
 
 // findPlist locates the launchd plist for ccmimolink / mimo_proxy.

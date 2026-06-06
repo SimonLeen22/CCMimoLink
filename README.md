@@ -4,7 +4,7 @@
 
 [🌐 Homepage](https://simonleen22.github.io/CCMimoLink/) · [中文文档](#中文) · [🍷 Windows 版本](https://github.com/2144291529/CCMimoLink-win) · [Releases](https://github.com/SimonLeen22/CCMimoLink/releases)
 
-**v1.1** — CLI subcommands for model management and config sync are now built in.
+**v1.2** — image requests now auto-route to `mimo-v2.5`, while text-first and multi-agent turns stay on `mimo-v2.5-pro`; GPT-family request model names are aliased automatically for Codex compatibility.
 
 ---
 
@@ -32,7 +32,8 @@ User → Codex → CCMimoLink (local proxy) → Xiaomi MiMo upstream
 
 ### Intelligent Routing
 
-- **Multimodal Fallback**: Requests containing images automatically fall back to `mimo-v2.5` for compatibility.
+- **Text-First + Vision Fallback**: Pure text requests stay on `mimo-v2.5-pro`; requests containing images automatically route the whole turn to `mimo-v2.5` for compatibility.
+- **Codex Model Alias Mapping**: GPT-family request model names from Codex (for example `gpt-5.4` / `gpt-5.4-mini`) are mapped onto MiMo backends automatically so Codex-side model labels do not break upstream routing.
 - **Dynamic Model Switching**: Switch between `mimo-v2.5` and `mimo-v2.5-pro` via built-in CLI subcommands (`model set` + `model restart`), environment variables, or startup flags.
 
 ### Safety and Resilience
@@ -101,11 +102,11 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink
 ./ccmimolink --v2.5
 ```
 
-> Image requests are unaffected and always fall back to `mimo-v2.5`.
+> Image-bearing turns always route to `mimo-v2.5`; text-only turns keep using `mimo-v2.5-pro` by default.
 
 ## CLI Subcommands
 
-v1.1 introduces built-in CLI subcommands — no external scripts needed:
+v1.2 keeps the built-in CLI workflow from v1.1 and adds safer image/model routing for Codex:
 
 | Command | Description |
 | --- | --- |
@@ -128,11 +129,12 @@ All runtime settings are provided via environment variables:
 | `MIMO_BASE_URL` | `https://token-plan-cn.xiaomimimo.com/v1` | MiMo upstream base URL. |
 | `MIMO_MODEL` | `mimo-v2.5-pro` | Default text model. |
 | `MIMO_PROXY_PORT` | `9876` | Local listen port. |
-| `MIMO_PROXY_MAX_CONCURRENT` | `1` | Maximum concurrent upstream requests. |
-| `MIMO_PROXY_MIN_INTERVAL_MS` | `1500` | Minimum delay between upstream requests (ms). |
+| `MIMO_PROXY_MAX_CONCURRENT` | `4` | Maximum concurrent upstream requests. Codex multi-agent uses 2-3. |
+| `MIMO_PROXY_MIN_INTERVAL_MS` | `600` | Minimum delay between upstream requests (ms). |
 | `MIMO_PROXY_429_BACKOFF_MS` | `30000` | Backoff duration after an upstream `429` response (ms). |
 | `MIMO_PROXY_LOG` | `mimo_proxy.log` | Log file path. |
 | `MIMO_PROXY_SKIP_CC_SWITCH_SYNC` | `false` | Skip startup sync (for development). |
+| `MIMO_PROXY_LEGACY_MODE` | `false` | Restore conservative pre-v1.2 routing defaults (namespace tools dropped, single-request pacing 1/1500ms). |
 | `CC_SWITCH_SETTINGS_PATH` | `~/.cc-switch/settings.json` | Path to cc switch settings file. |
 | `CC_SWITCH_DB_PATH` | `~/.cc-switch/cc-switch.db` | Path to cc switch database. |
 | `CODEX_CONFIG_PATH` | `~/.codex/config.toml` | Path to local Codex config. |
@@ -153,7 +155,8 @@ All runtime settings are provided via environment variables:
 - Unsupported built-in tools are filtered rather than crashing the entire request.
 - `previous_response_id` continuation is implemented via bounded in-memory storage.
 - `parallel_tool_calls` is accepted and forwarded; final behavior depends on MiMo upstream support.
-- Image requests are always pinned to `mimo-v2.5`.
+- Image-bearing turns are pinned to `mimo-v2.5`; text-only turns stay on `mimo-v2.5-pro` by default.
+- GPT-family Codex request model names are aliased onto MiMo backends automatically.
 
 ## Requirements
 
@@ -235,8 +238,9 @@ CCMimoLink 不是又一个反向代理。它是一个主动协议适配层——
 
 ### 智能路由
 
-- **多模态回落**：请求中带图片时，自动回落到 `mimo-v2.5` 保证兼容性
-- **动态模型切换**：通过内置 CLI 子命令（`model set` + `model restart`）、环境变量或启动参数，在 `mimo-v2.5` 与 `mimo-v2.5-pro` 之间动态切换
+- **文本优先 + 视觉回落**：纯文本请求保留在 `mimo-v2.5-pro`；只要请求里带图片，整轮自动切到 `mimo-v2.5` 保证兼容。
+- **Codex 模型号别名映射**：Codex 侧可能带来的 GPT 风格模型名（例如 `gpt-5.4` / `gpt-5.4-mini`）会自动映射到 MiMo 后端，避免上游因为模型名不认识而报错。
+- **动态模型切换**：通过内置 CLI 子命令（`model set` + `model restart`）、环境变量或启动参数，在 `mimo-v2.5` 与 `mimo-v2.5-pro` 之间动态切换。
 
 ### 安全与韧性
 
@@ -304,11 +308,11 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink
 ./ccmimolink --v2.5
 ```
 
-> 图片请求不受影响，始终回落到 `mimo-v2.5`。
+> 带图轮次始终自动切到 `mimo-v2.5`；纯文本轮次默认继续使用 `mimo-v2.5-pro`。
 
 ## CLI 子命令
 
-v1.1 新增内置 CLI 子命令，无需外部脚本：
+v1.2 在保留 v1.1 内置 CLI 工作流的基础上，新增了更稳的图片/模型路由策略：
 
 | 命令 | 说明 |
 | --- | --- |
@@ -331,11 +335,12 @@ v1.1 新增内置 CLI 子命令，无需外部脚本：
 | `MIMO_BASE_URL` | `https://token-plan-cn.xiaomimimo.com/v1` | MiMo 上游地址 |
 | `MIMO_MODEL` | `mimo-v2.5-pro` | 默认文本模型 |
 | `MIMO_PROXY_PORT` | `9876` | 本地监听端口 |
-| `MIMO_PROXY_MAX_CONCURRENT` | `1` | 最大并发上游请求数 |
-| `MIMO_PROXY_MIN_INTERVAL_MS` | `1500` | 上游请求最小间隔（毫秒） |
+| `MIMO_PROXY_MAX_CONCURRENT` | `4` | 最大并发上游请求数。Codex 多子任务场景下需要 2-3。 |
+| `MIMO_PROXY_MIN_INTERVAL_MS` | `600` | 上游请求最小间隔（毫秒） |
 | `MIMO_PROXY_429_BACKOFF_MS` | `30000` | 收到上游 `429` 后的退避时间（毫秒） |
 | `MIMO_PROXY_LOG` | `mimo_proxy.log` | 日志文件路径 |
 | `MIMO_PROXY_SKIP_CC_SWITCH_SYNC` | `false` | 跳过启动同步（开发调试用） |
+| `MIMO_PROXY_LEGACY_MODE` | `false` | 恢复更保守的 pre-v1.2 路由默认值（namespace 工具被 drop、单请求节流 1/1500ms） |
 | `CC_SWITCH_SETTINGS_PATH` | `~/.cc-switch/settings.json` | cc switch 配置文件路径 |
 | `CC_SWITCH_DB_PATH` | `~/.cc-switch/cc-switch.db` | cc switch 数据库路径 |
 | `CODEX_CONFIG_PATH` | `~/.codex/config.toml` | Codex 配置文件路径 |
@@ -356,7 +361,8 @@ v1.1 新增内置 CLI 子命令，无需外部脚本：
 - 不兼容的 built-in tool 会被过滤，不会打崩整条请求
 - `previous_response_id` 通过有界内存存储实现
 - `parallel_tool_calls` 可透传，最终效果取决于 MiMo 上游
-- 图片请求固定回落到 `mimo-v2.5`
+- 带图轮次固定回落到 `mimo-v2.5`，纯文本轮次默认保留在 `mimo-v2.5-pro`
+- Codex 侧的 GPT 风格模型名会自动映射到 MiMo 后端
 
 ## 运行要求
 
