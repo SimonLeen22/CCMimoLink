@@ -272,17 +272,18 @@
       transform: translateY(-1px);
     }
 
-    /* ========== Flow Diagram ========== */
-    .flow-section { padding: 4rem 0; }
-    .flow-diagram {
-      background: var(--bg-card);
+    /* ========== Architecture & Flow ========== */
+    .architecture-section { padding: 4rem 0 2rem; }
+    .architecture-board {
+      background: linear-gradient(180deg, #ffffff 0%, #fcfcfc 100%);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-lg);
-      padding: 2.5rem;
+      padding: 2rem;
       position: relative;
       overflow: hidden;
       box-shadow: var(--shadow-card);
     }
+    .architecture-board::before,
     .flow-diagram::before {
       content: '';
       position: absolute;
@@ -292,6 +293,146 @@
       height: 3px;
       background: linear-gradient(90deg, transparent, var(--mimo-orange), transparent);
       border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    }
+    .architecture-lane {
+      display: flex;
+      align-items: stretch;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+    .arch-node {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    }
+    .arch-node-highlight {
+      background: linear-gradient(180deg, rgba(255, 105, 0, 0.07) 0%, rgba(255, 105, 0, 0.03) 100%);
+      border-color: rgba(255, 105, 0, 0.22);
+    }
+    .arch-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--mimo-orange);
+      margin-bottom: 0.55rem;
+    }
+    .arch-node h3 {
+      margin-bottom: 0.45rem;
+      font-size: 1rem;
+    }
+    .arch-node p {
+      margin-bottom: 0;
+      font-size: 0.9rem;
+      line-height: 1.65;
+    }
+    .arch-arrow {
+      flex: 0 0 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--mimo-orange);
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+    .arch-control {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      background: rgba(255, 105, 0, 0.04);
+      border: 1px solid rgba(255, 105, 0, 0.14);
+      border-radius: var(--radius-md);
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+    }
+    .arch-control-badge {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 88px;
+      padding: 0.45rem 0.75rem;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid rgba(255, 105, 0, 0.18);
+      color: var(--mimo-orange);
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+    .arch-control p {
+      margin-bottom: 0;
+      font-size: 0.92rem;
+    }
+    .arch-support {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+    }
+    .arch-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1.2rem;
+    }
+    .arch-panel h3 {
+      margin-bottom: 0.8rem;
+    }
+    .arch-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+    }
+    .arch-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.35rem 0.7rem;
+      border-radius: 999px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+    .arch-list {
+      display: grid;
+      gap: 0.75rem;
+    }
+    .arch-list-item {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+    }
+    .arch-list-label {
+      flex-shrink: 0;
+      min-width: 58px;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      background: var(--mimo-orange-subtle);
+      color: var(--mimo-orange);
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-align: center;
+    }
+    .arch-list-item p {
+      margin-bottom: 0;
+      font-size: 0.9rem;
+    }
+    .flow-section { padding: 2rem 0 4rem; }
+    .flow-diagram {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem;
+      position: relative;
+      overflow: hidden;
+      box-shadow: var(--shadow-card);
     }
     .flow-steps {
       display: flex;
@@ -632,7 +773,25 @@
       .features-grid { grid-template-columns: 1fr; }
       .nav-links { gap: 0.75rem; }
       .nav-links a:not(.lang-toggle) { display: none; }
+      .arch-support { grid-template-columns: 1fr; }
+      .architecture-board,
       .flow-diagram { padding: 1.5rem; }
+      .architecture-lane {
+        flex-direction: column;
+        gap: 0.9rem;
+      }
+      .arch-arrow {
+        flex: 0 0 auto;
+        transform: rotate(90deg);
+        align-self: center;
+      }
+      .arch-control {
+        flex-direction: column;
+      }
+      .arch-control-badge {
+        min-width: 0;
+        align-self: flex-start;
+      }
       pre { padding: 1rem; font-size: 0.78rem; }
     }
   </style>
@@ -687,6 +846,94 @@
         <a href="#features" class="btn btn-secondary">
           <span data-zh>了解功能</span><span data-en>Explore Features</span>
         </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Architecture -->
+  <section class="architecture-section">
+    <div class="container">
+      <div class="section-header">
+        <h2>
+          <span class="icon">🧭</span>
+          <span data-zh>运行架构</span><span data-en>Runtime Architecture</span>
+        </h2>
+        <p data-zh>这不是简单的反向代理，而是一层专门为 Codex 与 Xiaomi MiMo 之间做协议适配、模型路由与兼容兜底的本地桥接层。</p>
+        <p data-en>This is not a plain reverse proxy. It is a local bridge that adapts protocol semantics, model routing, and compatibility between Codex and Xiaomi MiMo.</p>
+      </div>
+      <div class="architecture-board">
+        <div class="architecture-lane">
+          <div class="arch-node">
+            <div class="arch-kicker">Client</div>
+            <h3 data-zh>用户 / 长任务 Prompt</h3>
+            <h3 data-en>User / Long-task Prompt</h3>
+            <p data-zh>任务由用户或主控模型发起，要求通常偏长上下文、分步骤执行和工具调用。</p>
+            <p data-en>The task starts from the user or a controller model, usually with long context, stepwise execution, and tool use.</p>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node">
+            <div class="arch-kicker">Frontend</div>
+            <h3>Codex</h3>
+            <p data-zh>Codex 继续按 OpenAI 风格发送 <code>/v1/responses</code>、streaming、多轮续接与工具调用语义。</p>
+            <p data-en>Codex continues to speak OpenAI-style <code>/v1/responses</code> semantics, including streaming, multi-turn continuation, and tool calls.</p>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node arch-node-highlight">
+            <div class="arch-kicker">Adapter</div>
+            <h3>CCMimoLink</h3>
+            <p data-zh>本地代理位于 <code>127.0.0.1:9876/v1</code>，负责协议翻译、兼容层处理、模型别名映射、限流与错误兜底。</p>
+            <p data-en>The local bridge at <code>127.0.0.1:9876/v1</code> handles protocol translation, compatibility shaping, model alias mapping, throttling, and fallback behavior.</p>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node">
+            <div class="arch-kicker">Upstream</div>
+            <h3>Xiaomi MiMo</h3>
+            <p data-zh>默认文本主模型是 <code>mimo-v2.5-pro</code>；如果整轮请求带图，则自动回落到 <code>mimo-v2.5</code> 保证视觉兼容。</p>
+            <p data-en>The default text model is <code>mimo-v2.5-pro</code>; image-bearing turns automatically fall back to <code>mimo-v2.5</code> for vision compatibility.</p>
+          </div>
+        </div>
+
+        <div class="arch-control">
+          <div class="arch-control-badge">cc switch</div>
+          <p data-zh>控制面由 <code>cc switch</code> 管理：它保存 Xiaomi MiMo API Key；CCMimoLink 启动时会定位对应 provider、改写 MiMo 路由到本地代理，并同步刷新本地 Codex 配置。</p>
+          <p data-en>The control plane is managed by <code>cc switch</code>: it stores the Xiaomi MiMo API key; on startup, CCMimoLink locates the provider, rewrites the MiMo route to the local bridge, and refreshes the local Codex config.</p>
+        </div>
+
+        <div class="arch-support">
+          <div class="arch-panel">
+            <h3 data-zh>兼容层在做什么</h3>
+            <h3 data-en>What the compatibility layer does</h3>
+            <div class="arch-tags">
+              <span class="arch-tag">Responses → Chat Completions</span>
+              <span class="arch-tag" data-zh>Codex 子任务工具展平</span><span class="arch-tag" data-en>Sub-agent tool flattening</span>
+              <span class="arch-tag" data-zh>tool_choice 规范化</span><span class="arch-tag" data-en>tool_choice normalization</span>
+              <span class="arch-tag" data-zh>GPT 风格模型别名映射</span><span class="arch-tag" data-en>GPT-style model alias mapping</span>
+              <span class="arch-tag" data-zh>流式事件转写</span><span class="arch-tag" data-en>stream event translation</span>
+              <span class="arch-tag"><code>previous_response_id</code></span>
+            </div>
+          </div>
+          <div class="arch-panel">
+            <h3 data-zh>长任务写 Prompt 的建议边界</h3>
+            <h3 data-en>Prompting guidance for long tasks</h3>
+            <div class="arch-list">
+              <div class="arch-list-item">
+                <span class="arch-list-label" data-zh>推荐</span><span class="arch-list-label" data-en>Best</span>
+                <p data-zh>优先写成文本优先、步骤清晰、工具调用明确、允许多轮续接的任务。</p>
+                <p data-en>Prefer text-first tasks with clear steps, explicit tool use, and multi-turn continuation.</p>
+              </div>
+              <div class="arch-list-item">
+                <span class="arch-list-label" data-zh>注意</span><span class="arch-list-label" data-en>Note</span>
+                <p data-zh>兼容性来自本地适配而非 MiMo 原生一比一支持；少依赖官方专有控制面特性更稳。</p>
+                <p data-en>Compatibility comes from local adaptation rather than native one-to-one MiMo support; prompts are more stable when they avoid provider-specific control-plane assumptions.</p>
+              </div>
+              <div class="arch-list-item">
+                <span class="arch-list-label" data-zh>回落</span><span class="arch-list-label" data-en>Fallback</span>
+                <p data-zh>一旦请求带图，整轮会切到 <code>mimo-v2.5</code>，所以视觉与纯文本长推理要分开考虑。</p>
+                <p data-en>Any image in the request switches the whole turn to <code>mimo-v2.5</code>, so vision turns should be planned separately from pure long-form reasoning turns.</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
