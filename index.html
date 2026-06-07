@@ -824,8 +824,8 @@
     <div class="container">
       <div class="hero-badge">
         <span class="pulse"></span>
-        <span data-zh>开源 · 本地路由桥接器 · v1.2</span>
-        <span data-en>Open Source · Local Routing Bridge · v1.2</span>
+        <span data-zh>开源 · 本地路由桥接器 · v2.0</span>
+        <span data-en>Open Source · Local Routing Bridge · v2.0</span>
       </div>
       <p class="hero-author">
         <span data-zh>作者</span><span data-en>Author</span>：<a href="https://x.com/simonlin" target="_blank" rel="noopener">@simonlin</a> · <a href="https://github.com/SimonLeen22/CCMimoLink" target="_blank" rel="noopener">GitHub</a>
@@ -833,11 +833,11 @@
       <h1>CCMimoLink</h1>
       <p class="subtitle" data-zh>
         面向 <code>cc switch</code> + Codex 的 Xiaomi MiMo 本地路由桥接器。<br>
-        v1.2 重点增强 Codex 子任务兼容性、多子任务路由稳定性，并保留图文混合场景的自动回落能力。
+        v2.0 新增 Anthropic Messages 上游模式，支持扩展思考（extended thinking）和更高保真度的工具调用，并全面强化 HTTP 韧性与并发安全。
       </p>
       <p class="subtitle" data-en>
         A local routing bridge that brings Xiaomi MiMo to <code>cc switch</code> + Codex.<br>
-        v1.2 focuses on Codex sub-agent compatibility, safer multi-agent routing, and stable fallback for mixed text/image turns.
+        v2.0 adds Anthropic Messages upstream mode with extended thinking support, tool call hardening, and HTTP resilience improvements.
       </p>
       <div class="hero-actions">
         <a href="#quickstart" class="btn btn-primary">
@@ -1130,8 +1130,8 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink</code></pre>
           <span class="icon">💻</span>
           <span data-zh>CLI 子命令</span><span data-en>CLI Subcommands</span>
         </h2>
-        <p data-zh>v1.2：保留 v1.1 内置 CLI 的同时，重点增强 Codex 子任务兼容性、多子任务路由稳定性，并补充图文混合轮次的自动回落能力。</p>
-        <p data-en>v1.2: Keeps the built-in CLI from v1.1 while focusing on Codex sub-agent compatibility, safer multi-agent routing, and stable fallback for mixed text/image turns.</p>
+        <p data-zh>v2.0 新增 <code>MIMO_UPSTREAM_PROTOCOL=anthropic</code> 上游模式，支持扩展思考和更高保真度的工具调用，并修复了高并发下的槽泄漏问题。</p>
+        <p data-en>v2.0 adds <code>MIMO_UPSTREAM_PROTOCOL=anthropic</code> upstream mode with extended thinking support, tool call hardening, and a concurrency slot-leak fix for high fan-out workloads.</p>
       </div>
       <div class="config-table-wrap">
         <table>

@@ -13,6 +13,7 @@ launchd.stderr.log
 # Local backups and temp files
 *.bak
 *.bak.*
+*.bak-*
 *.tmp
 .DS_Store
 
@@ -32,3 +33,21 @@ switch-mimo.sh
 # Build output
 dist/
 build/
+
+# Internal development and debugging files
+WORKLOG.md
+FIX_PLAN.md
+anthropic-bridge-proposal.html
+debug_request_capture.py
+main.go.orig
+mimo_proxy_claude
+test_anthropic_compat.py
+test_codex_tools_anthropic.py
+web_search.js
+
+# Internal debug CLI tools (not part of the public binary)
+cmd/debug_large/
+cmd/debug_request/
+
+# Claude Code project memory
+.claude/

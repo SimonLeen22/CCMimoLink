@@ -32,6 +32,10 @@ const (
 	defaultMinIntervalMS     = 600
 	describeImageToolName    = "describe_image"
 	maxDescribeRounds        = 2
+
+	// upstream HTTP timeouts
+	upstreamResponseHeaderTimeout = 60 * time.Second
+	upstreamStreamIdleTimeout     = 60 * time.Second
 )
 
 // describeImageTool 是 proxy 主动注入的"读图"工具，OpenAI Chat Completions function 格式。
@@ -66,7 +70,7 @@ var (
 	mimoKey              = strings.TrimSpace(os.Getenv("MIMO_API_KEY"))
 	mimoModel            = envOrDefault("MIMO_MODEL", defaultMimoModel)
 	proxyPort            = envOrDefault("MIMO_PROXY_PORT", defaultProxyPort)
-	client               = &http.Client{}
+	client               = newHTTPClient()
 	limiter              = newUpstreamLimiter()
 	responseStore        = newResponseStore(envIntOrDefault("MIMO_PROXY_RESPONSE_STORE_MAX", defaultResponseStoreSize))
 	skipCCSwitchSync     = strings.EqualFold(strings.TrimSpace(os.Getenv("MIMO_PROXY_SKIP_CC_SWITCH_SYNC")), "true")
@@ -101,6 +105,41 @@ func applyModelFlag() {
 		}
 		os.Exit(0)
 	}
+}
+
+func newHTTPClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = upstreamResponseHeaderTimeout
+	return &http.Client{Transport: t}
+}
+
+// idleTimeoutBody wraps a response body and closes it automatically if no
+// bytes are read for upstreamStreamIdleTimeout. This prevents a stalled
+// upstream from holding a limiter slot (and goroutine) forever.
+type idleTimeoutBody struct {
+	io.ReadCloser
+	timer    *time.Timer
+	closeOnce sync.Once
+}
+
+func (b *idleTimeoutBody) Read(p []byte) (int, error) {
+	b.timer.Reset(upstreamStreamIdleTimeout)
+	return b.ReadCloser.Read(p)
+}
+
+func (b *idleTimeoutBody) Close() error {
+	b.timer.Stop()
+	var err error
+	b.closeOnce.Do(func() { err = b.ReadCloser.Close() })
+	return err
+}
+
+func wrapIdleTimeout(rc io.ReadCloser) io.ReadCloser {
+	b := &idleTimeoutBody{ReadCloser: rc}
+	b.timer = time.AfterFunc(upstreamStreamIdleTimeout, func() {
+		b.closeOnce.Do(func() { rc.Close() })
+	})
+	return b
 }
 
 func envOrDefault(name, fallback string) string {
@@ -2107,14 +2146,16 @@ func handleStream(w http.ResponseWriter, inbound *http.Request, chatReq ChatRequ
 	}
 	var respBody []byte
 	defer func() { closeUpstream(resp, respBody) }()
-	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		defer resp.Body.Close()
 		respBody, _ = io.ReadAll(resp.Body)
 		log.Printf("[Proxy] MiMo stream error %d: %s", resp.StatusCode, string(respBody))
 		writeErrorResponse(w, resp.StatusCode, "upstream_error", string(respBody))
 		return
 	}
+	resp.Body = wrapIdleTimeout(resp.Body)
+	defer resp.Body.Close()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
@@ -2480,6 +2521,17 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		hasImages,
 		selectedModel,
 	)
+
+	// ── Protocol branch: Anthropic Messages vs OpenAI chat/completions ──
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("MIMO_UPSTREAM_PROTOCOL")), "anthropic") {
+		log.Printf("[Proxy] Using Anthropic Messages upstream protocol")
+		if req.Stream {
+			handleAnthropicStream(w, r, chatReq)
+		} else {
+			handleAnthropicNonStream(w, r, chatReq)
+		}
+		return
+	}
 
 	if req.Stream {
 		handleStream(w, r, chatReq)

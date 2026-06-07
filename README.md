@@ -4,7 +4,7 @@
 
 [🌐 Homepage](https://simonleen22.github.io/CCMimoLink/) · [中文文档](#中文) · [🍷 Windows 版本](https://github.com/2144291529/CCMimoLink-win) · [Releases](https://github.com/SimonLeen22/CCMimoLink/releases)
 
-**v1.2** — improved Codex sub-agent compatibility, safer multi-agent routing, and automatic image fallback to `mimo-v2.5`.
+**v2.0** — Anthropic Messages upstream protocol, extended thinking support, tool call hardening, and HTTP resilience improvements.
 
 ---
 
@@ -26,6 +26,8 @@ User → Codex → CCMimoLink (local proxy) → Xiaomi MiMo upstream
 ### Protocol Adaptation
 
 - **Responses → Chat Completions**: Translates OpenAI-style `/v1/responses` into MiMo's chat-completions format, injecting `instructions` as a system message when needed.
+- **Anthropic Messages upstream mode**: Set `MIMO_UPSTREAM_PROTOCOL=anthropic` to route via MiMo's Anthropic Messages API instead of chat/completions. Unlocks extended thinking and higher tool-call fidelity for complex Codex agent tasks.
+- **Extended Thinking**: In Anthropic upstream mode, `thinking` blocks are streamed and replayed correctly. Thinking is automatically suppressed when replaying tool history to avoid upstream hangs.
 - **Codex Sub-Agent Compatibility**: Flattens Codex multi-agent tool shapes into standard function tools so sub-agent and multi-tool turns remain usable upstream.
 - **Tool Compatibility Layer**: Preserves standard function tools, normalizes `tool_choice`, and filters unsupported built-in tools to prevent upstream failures.
 - **Multi-turn Continuation**: Maintains bounded in-memory state for response chains, supports `previous_response_id`, and replays function-call context and provider reasoning across turns.
@@ -40,6 +42,8 @@ User → Codex → CCMimoLink (local proxy) → Xiaomi MiMo upstream
 
 ### Safety and Resilience
 
+- **HTTP Timeout Protection**: A 60-second `ResponseHeaderTimeout` prevents a non-responding upstream from blocking the connection indefinitely. An idle-stream timeout (60s) closes stalled response bodies automatically, so concurrency slots are never held forever.
+- **Concurrency Safety**: Each stream correctly releases its limiter slot on completion or error — no slot leaks under high fan-out.
 - **Safe Startup Sync**: Automatically backs up Codex config before rewriting.
 - **Throttling and Backoff**: Built-in request rate limiting with upstream `429` retry backoff.
 - **XML Fallback Parsing**: Recovers tool-call intent from tool-call-like text output when needed.
@@ -81,7 +85,11 @@ Rewrite routes and refresh config without starting the proxy:
 ### Step 4: Run the proxy
 
 ```bash
+# Standard mode (OpenAI chat/completions upstream)
 ./ccmimolink
+
+# Anthropic Messages upstream mode (recommended for complex Codex tasks)
+MIMO_UPSTREAM_PROTOCOL=anthropic ./ccmimolink
 ```
 
 Default local proxy address: `http://127.0.0.1:9876/v1`
@@ -108,8 +116,6 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink
 
 ## CLI Subcommands
 
-v1.2 keeps the built-in CLI workflow from v1.1 and focuses on Codex sub-agent compatibility, safer multi-agent routing, and stable image fallback for mixed workloads:
-
 | Command | Description |
 | --- | --- |
 | `model set <name>` | Set MIMO_MODEL in plist (run `model restart` separately) |
@@ -131,12 +137,14 @@ All runtime settings are provided via environment variables:
 | `MIMO_BASE_URL` | `https://token-plan-cn.xiaomimimo.com/v1` | MiMo upstream base URL. |
 | `MIMO_MODEL` | `mimo-v2.5-pro` | Default text model. |
 | `MIMO_PROXY_PORT` | `9876` | Local listen port. |
-| `MIMO_PROXY_MAX_CONCURRENT` | `4` | Maximum concurrent upstream requests. Codex multi-agent uses 2-3. |
+| `MIMO_UPSTREAM_PROTOCOL` | `openai` | Set to `anthropic` to route via MiMo's Anthropic Messages API instead of chat/completions. Recommended for Codex agent tasks with complex tool use. |
+| `MIMO_PROXY_MAX_CONCURRENT` | `4` | Maximum concurrent upstream requests. |
 | `MIMO_PROXY_MIN_INTERVAL_MS` | `600` | Minimum delay between upstream requests (ms). |
 | `MIMO_PROXY_429_BACKOFF_MS` | `30000` | Backoff duration after an upstream `429` response (ms). |
 | `MIMO_PROXY_LOG` | `mimo_proxy.log` | Log file path. |
 | `MIMO_PROXY_SKIP_CC_SWITCH_SYNC` | `false` | Skip startup sync (for development). |
-| `MIMO_PROXY_LEGACY_MODE` | `false` | Restore conservative pre-v1.2 routing defaults (namespace tools dropped, single-request pacing 1/1500ms). |
+| `MIMO_PROXY_LEGACY_MODE` | `false` | Restore conservative pre-v1.2 routing defaults. |
+| `MIMO_DEBUG_DUMP` | empty | If set to a directory path, writes upstream request/response pairs for debugging. |
 | `CC_SWITCH_SETTINGS_PATH` | `~/.cc-switch/settings.json` | Path to cc switch settings file. |
 | `CC_SWITCH_DB_PATH` | `~/.cc-switch/cc-switch.db` | Path to cc switch database. |
 | `CODEX_CONFIG_PATH` | `~/.codex/config.toml` | Path to local Codex config. |
@@ -159,6 +167,7 @@ All runtime settings are provided via environment variables:
 - `parallel_tool_calls` is accepted and forwarded; final behavior depends on MiMo upstream support.
 - Image-bearing turns are pinned to `mimo-v2.5`; text-only turns stay on `mimo-v2.5-pro` by default.
 - GPT-family Codex request model names are aliased onto MiMo backends automatically.
+- In Anthropic upstream mode, consecutive same-role messages are merged into valid alternating format before forwarding.
 
 ## Requirements
 
@@ -200,6 +209,21 @@ Restart Codex after sync so it reloads `~/.codex/config.toml`.
 
 Both applications cache provider configuration in memory. Restarting ensures the rewritten route and refreshed `X-Mimo-Api-Key` take effect.
 
+## Changelog
+
+### v2.0
+- **Anthropic Messages upstream mode**: new `MIMO_UPSTREAM_PROTOCOL=anthropic` routes via MiMo's Anthropic Messages API, enabling extended thinking and higher tool-call fidelity.
+- **Extended thinking support**: thinking blocks are streamed and replayed correctly; automatically suppressed when replaying tool history to prevent upstream hangs.
+- **Tool call hardening**: six targeted fixes — guard against empty tool IDs, correct `tool_choice` mapping (`auto`/`required`/`none`/function), multi-system-message concatenation, scanner error recovery, flush guard for incomplete tool calls, and tightened debug file permissions.
+- **HTTP timeout protection**: `ResponseHeaderTimeout` (60s) and idle-stream timeout (60s) prevent stalled upstreams from holding concurrency slots.
+- **Concurrency slot leak fix**: streams now correctly release limiter slots on all exit paths, eliminating the freeze-under-heavy-fan-out bug.
+
+### v1.2
+- Codex sub-agent compatibility improvements, safer multi-agent routing, automatic image fallback to `mimo-v2.5`.
+
+### v1.1
+- Built-in CLI subcommands for model management and sync.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).
@@ -234,20 +258,24 @@ CCMimoLink 不是又一个反向代理。它是一个主动协议适配层——
 ### 协议适配
 
 - **Responses → Chat Completions**：把 OpenAI 风格的 `/v1/responses` 请求翻译成 MiMo 的 chat-completions 格式，必要时把 `instructions` 注入为 system message
-- **Codex 子任务兼容层**：把 Codex 的多子任务工具形态展平成标准 function tool，尽量保证 sub-agent / 多工具轮次在上游可用
+- **Anthropic Messages 上游模式**：通过 `MIMO_UPSTREAM_PROTOCOL=anthropic` 切换到 MiMo 的 Anthropic Messages API，解锁扩展思考（extended thinking）和更高的工具调用保真度，适合复杂 Codex 代理任务
+- **扩展思考（Extended Thinking）支持**：Anthropic 上游模式下，`thinking` 块会被正确流式传输和回放；当回放含工具历史的上下文时，自动抑制 thinking 以避免上游卡死
+- **Codex 子任务兼容层**：把 Codex 的多子任务工具形态展平成标准 function tool，保证 sub-agent / 多工具轮次在上游可用
 - **Tool 兼容层**：保留标准 function tool，规范化 `tool_choice`，过滤不兼容的 built-in tool 避免整条请求崩掉
 - **多轮续接**：通过有界内存保存 response-chain 状态，支持 `previous_response_id`，在多轮交互中回放 function-call 上下文和 provider reasoning 状态
 - **流式保真**：保留真实的增量流式路径，在读取 MiMo 上游流时发出 Responses 风格事件
 
 ### 智能路由
 
-- **面向 Codex 的模型路由**：纯文本和多子任务轮次优先保留在 `mimo-v2.5-pro`，尽量维持 Codex 风格请求语义。
-- **文本优先 + 视觉回落**：只要请求里带图片，整轮自动切到 `mimo-v2.5` 保证兼容。
-- **Codex 模型号别名映射**：Codex 侧可能带来的 GPT 风格模型名（例如 `gpt-5.4` / `gpt-5.4-mini`）会自动映射到 MiMo 后端，避免上游因为模型名不认识而报错。
-- **动态模型切换**：通过内置 CLI 子命令（`model set` + `model restart`）、环境变量或启动参数，在 `mimo-v2.5` 与 `mimo-v2.5-pro` 之间动态切换。
+- **面向 Codex 的模型路由**：纯文本和多子任务轮次优先保留在 `mimo-v2.5-pro`，尽量维持 Codex 风格请求语义
+- **文本优先 + 视觉回落**：只要请求里带图片，整轮自动切到 `mimo-v2.5` 保证兼容
+- **Codex 模型号别名映射**：Codex 侧可能带来的 GPT 风格模型名（例如 `gpt-5.4` / `gpt-5.4-mini`）会自动映射到 MiMo 后端
+- **动态模型切换**：通过内置 CLI 子命令（`model set` + `model restart`）、环境变量或启动参数在 `mimo-v2.5` 与 `mimo-v2.5-pro` 之间动态切换
 
 ### 安全与韧性
 
+- **HTTP 超时保护**：60 秒 `ResponseHeaderTimeout` 防止无响应的上游无限阻塞连接；60 秒空闲流超时自动关闭停滞的响应体，并发槽不会被永久占用
+- **并发安全**：每条流在完成或出错时都正确释放其限流槽，高 fan-out 场景下不会出现槽泄漏
 - **启动安全同步**：回写 Codex 配置前自动备份原始文件
 - **限流与退避**：自带请求限流和上游 `429` 退避处理
 - **XML 兜底解析**：必要时可以从类 tool-call 文本中恢复工具调用意图
@@ -289,7 +317,11 @@ go build -o ccmimolink .
 ### 第四步：启动代理
 
 ```bash
+# 标准模式（OpenAI chat/completions 上游）
 ./ccmimolink
+
+# Anthropic Messages 上游模式（推荐用于复杂 Codex 代理任务）
+MIMO_UPSTREAM_PROTOCOL=anthropic ./ccmimolink
 ```
 
 默认本地代理地址：`http://127.0.0.1:9876/v1`
@@ -316,8 +348,6 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink
 
 ## CLI 子命令
 
-v1.2 在保留 v1.1 内置 CLI 工作流的基础上，重点增强 Codex 子任务兼容性、多子任务路由稳定性，以及图文混合场景下的回落策略：
-
 | 命令 | 说明 |
 | --- | --- |
 | `model set <name>` | 设置 plist 中的 MIMO_MODEL（需再执行 restart） |
@@ -339,12 +369,14 @@ v1.2 在保留 v1.1 内置 CLI 工作流的基础上，重点增强 Codex 子任
 | `MIMO_BASE_URL` | `https://token-plan-cn.xiaomimimo.com/v1` | MiMo 上游地址 |
 | `MIMO_MODEL` | `mimo-v2.5-pro` | 默认文本模型 |
 | `MIMO_PROXY_PORT` | `9876` | 本地监听端口 |
-| `MIMO_PROXY_MAX_CONCURRENT` | `4` | 最大并发上游请求数。Codex 多子任务场景下需要 2-3。 |
+| `MIMO_UPSTREAM_PROTOCOL` | `openai` | 设为 `anthropic` 可切换到 MiMo 的 Anthropic Messages API 上游，适合复杂工具调用场景 |
+| `MIMO_PROXY_MAX_CONCURRENT` | `4` | 最大并发上游请求数 |
 | `MIMO_PROXY_MIN_INTERVAL_MS` | `600` | 上游请求最小间隔（毫秒） |
 | `MIMO_PROXY_429_BACKOFF_MS` | `30000` | 收到上游 `429` 后的退避时间（毫秒） |
 | `MIMO_PROXY_LOG` | `mimo_proxy.log` | 日志文件路径 |
 | `MIMO_PROXY_SKIP_CC_SWITCH_SYNC` | `false` | 跳过启动同步（开发调试用） |
-| `MIMO_PROXY_LEGACY_MODE` | `false` | 恢复更保守的 pre-v1.2 路由默认值（namespace 工具被 drop、单请求节流 1/1500ms） |
+| `MIMO_PROXY_LEGACY_MODE` | `false` | 恢复更保守的 pre-v1.2 路由默认值 |
+| `MIMO_DEBUG_DUMP` | 空 | 设为目录路径后，将上游请求/响应对写入该目录（调试用） |
 | `CC_SWITCH_SETTINGS_PATH` | `~/.cc-switch/settings.json` | cc switch 配置文件路径 |
 | `CC_SWITCH_DB_PATH` | `~/.cc-switch/cc-switch.db` | cc switch 数据库路径 |
 | `CODEX_CONFIG_PATH` | `~/.codex/config.toml` | Codex 配置文件路径 |
@@ -367,6 +399,7 @@ v1.2 在保留 v1.1 内置 CLI 工作流的基础上，重点增强 Codex 子任
 - `parallel_tool_calls` 可透传，最终效果取决于 MiMo 上游
 - 带图轮次固定回落到 `mimo-v2.5`，纯文本轮次默认保留在 `mimo-v2.5-pro`
 - Codex 侧的 GPT 风格模型名会自动映射到 MiMo 后端
+- Anthropic 上游模式下，连续同角色消息会在转发前合并为合法的交替格式
 
 ## 运行要求
 
@@ -407,6 +440,21 @@ v1.2 在保留 v1.1 内置 CLI 工作流的基础上，重点增强 Codex 子任
 **`为什么必须重启 cc switch 和 Codex？`**
 
 这两个应用会把 provider 配置缓存在内存里。重启后才能确保改写后的路由和新的 `X-Mimo-Api-Key` 生效。
+
+## 版本历史
+
+### v2.0
+- **Anthropic Messages 上游模式**：新增 `MIMO_UPSTREAM_PROTOCOL=anthropic`，通过 MiMo 的 Anthropic Messages API 路由，解锁扩展思考和更高的工具调用保真度
+- **扩展思考支持**：thinking 块正确流式传输和回放；含工具历史时自动抑制，防止上游卡死
+- **工具调用硬化**：六项定向修复——空工具 ID 防护、正确的 `tool_choice` 映射（auto/required/none/function）、多 system message 拼接、scanner 错误恢复、flush 防护、调试文件权限收紧
+- **HTTP 超时保护**：`ResponseHeaderTimeout`（60s）+ 空闲流超时（60s），防止停滞的上游占用并发槽
+- **并发槽泄漏修复**：流在所有退出路径上都正确释放限流槽，消除高 fan-out 下的冻结 bug
+
+### v1.2
+- Codex 子任务兼容性增强、更稳定的多子任务路由、图文混合场景自动回落到 `mimo-v2.5`
+
+### v1.1
+- 内置 CLI 子命令，支持模型管理和配置同步
 
 ## 许可证
 
