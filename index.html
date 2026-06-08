@@ -1043,6 +1043,16 @@
           <p data-zh>对 compact 控制面请求提供本地处理，不把错误甩给上游。</p>
           <p data-en>Handles compact control-plane requests locally instead of letting them fail upstream.</p>
         </div>
+        <div class="feature-card">
+          <h3 data-zh>Anthropic Messages 上游模式</h3><h3 data-en>Anthropic Messages Upstream</h3>
+          <p data-zh>设置 <code>MIMO_UPSTREAM_PROTOCOL=anthropic</code> 通过 MiMo 的 Anthropic Messages API 路由，解锁扩展思考和更高保真度的工具调用。</p>
+          <p data-en>Set <code>MIMO_UPSTREAM_PROTOCOL=anthropic</code> to route via MiMo's Anthropic Messages API, unlocking extended thinking and higher tool-call fidelity.</p>
+        </div>
+        <div class="feature-card">
+          <h3 data-zh>HTTP 韧性与并发安全</h3><h3 data-en>HTTP Resilience &amp; Concurrency Safety</h3>
+          <p data-zh>60 秒响应头超时 + 空闲流超时，并发槽在所有退出路径上正确释放——高强度 fan-out 任务下不再冻结。</p>
+          <p data-en>60-second response-header timeout and idle-stream timeout; concurrency slots always released on every exit path — no more freeze under heavy fan-out.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -1394,6 +1404,42 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink</code></pre>
             <span data-en>Both applications cache provider configuration in memory. Restarting ensures the rewritten route and refreshed X-Mimo-Api-Key take effect.</span>
           </div></div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Real-World Validation -->
+  <section id="validation">
+    <div class="container">
+      <div class="section-header">
+        <h2>
+          <span class="icon">🧪</span>
+          <span data-zh>实测验证</span><span data-en>Real-World Validation</span>
+        </h2>
+        <p data-zh>v2.0 在正式发布前完成了一次 8 小时的全程真机压测。</p>
+        <p data-en>v2.0 completed an 8-hour end-to-end stress test on real hardware before release.</p>
+      </div>
+      <div class="features-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+        <div class="feature-card" style="text-align:center;">
+          <h3 style="font-size:2.2rem; color:var(--mimo-orange); letter-spacing:-0.02em;">190 / 190</h3>
+          <p data-zh>Linux 工具真机测试用例，全部通过</p>
+          <p data-en>Linux tool real-device test cases, all passed</p>
+        </div>
+        <div class="feature-card" style="text-align:center;">
+          <h3 style="font-size:2.2rem; color:var(--mimo-orange); letter-spacing:-0.02em;">~8 h</h3>
+          <p data-zh>Codex 代理连续运行时长，全程无冻结、无报错、无超时</p>
+          <p data-en>Continuous Codex agent runtime — zero freezes, zero errors, zero timeouts</p>
+        </div>
+        <div class="feature-card" style="text-align:center;">
+          <h3 style="font-size:2.2rem; color:var(--mimo-orange); letter-spacing:-0.02em;">0</h3>
+          <p data-zh>孤立请求（冻结信号）；全程并发槽正确释放</p>
+          <p data-en>Orphaned requests (freeze signals); concurrency slots correctly released throughout</p>
+        </div>
+      </div>
+      <div class="feature-card" style="margin-top:1.5rem;">
+        <h3 data-zh>测试场景</h3><h3 data-en>Test Scenario</h3>
+        <p data-zh>使用 <code>MIMO_UPSTREAM_PROTOCOL=anthropic</code> 模式，通过 Codex 派发一个大型 Linux 工具集的真机测试任务。代理全程承载高强度 fan-out（并行 <code>tools=4</code>）、深度推理（<code>reasoning</code> token 峰值超过 6000）、上下文持续增长至 200 KB+，以及长达 30 分钟的心跳等待期（Codex 等待真机 shell 测试完成），最终任务以 190/190 收尾。</p>
+        <p data-en>Using <code>MIMO_UPSTREAM_PROTOCOL=anthropic</code> mode, a large Linux toolset was put through real-device testing via a Codex agent. The proxy sustained high fan-out (parallel <code>tools=4</code>), deep reasoning (peak <code>reasoning</code> tokens above 6,000), context growth beyond 200 KB, and a 30-minute heartbeat wait while shell tests ran on real hardware — completing at 190/190.</p>
       </div>
     </div>
   </section>

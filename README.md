@@ -209,6 +209,21 @@ Restart Codex after sync so it reloads `~/.codex/config.toml`.
 
 Both applications cache provider configuration in memory. Restarting ensures the rewritten route and refreshed `X-Mimo-Api-Key` take effect.
 
+## Real-World Validation
+
+v2.0 was validated by an 8-hour end-to-end stress test on real hardware before release:
+
+| Metric | Result |
+| --- | --- |
+| Linux tool real-device test cases | **190 / 190 passed** |
+| Continuous Codex agent runtime | **~8 hours** |
+| Freeze signals (orphaned requests) | **0** |
+| Upstream errors / timeouts | **0** |
+
+The test used `MIMO_UPSTREAM_PROTOCOL=anthropic` mode. The proxy sustained high fan-out (parallel `tools=4`), peak reasoning tokens above 6,000, context growing beyond 200 KB, and a 30-minute heartbeat wait while shell tests ran on real hardware — completing at 190/190 with no intervention.
+
+---
+
 ## Changelog
 
 ### v2.0
@@ -440,6 +455,21 @@ MIMO_MODEL="mimo-v2.5" ./ccmimolink
 **`为什么必须重启 cc switch 和 Codex？`**
 
 这两个应用会把 provider 配置缓存在内存里。重启后才能确保改写后的路由和新的 `X-Mimo-Api-Key` 生效。
+
+## 实测验证
+
+v2.0 在发布前完成了一次 8 小时的全程真机压测：
+
+| 指标 | 结果 |
+| --- | --- |
+| Linux 工具真机测试用例 | **190 / 190 全部通过** |
+| Codex 代理连续运行时长 | **约 8 小时** |
+| 冻结信号（孤立请求） | **0** |
+| 上游错误 / 超时 | **0** |
+
+测试使用 `MIMO_UPSTREAM_PROTOCOL=anthropic` 模式。代理全程承载高强度并行 fan-out（`tools=4`）、推理 token 峰值超 6000、上下文持续增长至 200 KB 以上，以及长达 30 分钟的心跳等待期（Codex 在等真机 shell 测试完成）——最终 190/190，全程无人工干预。
+
+---
 
 ## 版本历史
 
